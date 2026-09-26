@@ -1,7 +1,8 @@
-"""Free Instagram reel ingestion via yt-dlp + public web endpoints.
+"""Free Instagram reel ingestion — metadata fast path + optional audio STT.
 
-No Apify. Profile listing uses Instagram's public web API; per-reel audio
-is extracted with yt-dlp and transcribed locally with faster-whisper.
+Uses Instagram's public web API with a primed guest session (no Apify).
+Speech transcripts are extracted separately via yt-dlp + free SpeechRecognition
+and should run in the background so competitor load stays fast.
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ import logging
 import re
 import subprocess
 import tempfile
+import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,8 +28,9 @@ logger = logging.getLogger(__name__)
 IG_APP_ID = "936619743392459"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
+REQUEST_TIMEOUT = httpx.Timeout(12.0, connect=6.0)
 
 
 @dataclass
@@ -82,7 +86,7 @@ def _parse_timestamp(value: Any) -> datetime | None:
     return None
 
 
-def _browser_headers(username: str | None = None) -> dict[str, str]:
+def _browser_headers(username: str | None = None, csrf: str | None = None) -> dict[str, str]:
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "*/*",
@@ -90,44 +94,216 @@ def _browser_headers(username: str | None = None) -> dict[str, str]:
         "X-IG-App-ID": IG_APP_ID,
         "X-ASBD-ID": "129477",
         "X-Requested-With": "XMLHttpRequest",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "sec-ch-ua": '"Chromium";v="126", "Not.A/Brand";v="99"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
     }
     if username:
         headers["Referer"] = f"https://www.instagram.com/{username}/"
+        headers["Origin"] = "https://www.instagram.com"
+    if csrf:
+        headers["X-CSRFToken"] = csrf
     return headers
 
 
 def _caption_from_node(node: dict[str, Any]) -> str | None:
-    edges = (
-        node.get("edge_media_to_caption", {}).get("edges")
-        or node.get("edge_media_to_caption", {}).get("edges")
-        or []
-    )
+    edges = (node.get("edge_media_to_caption") or {}).get("edges") or []
     if edges:
         text = edges[0].get("node", {}).get("text")
         if text:
             return text
-    return node.get("caption") or node.get("accessibility_caption")
+    caption = node.get("caption")
+    if isinstance(caption, dict):
+        return caption.get("text")
+    if isinstance(caption, str):
+        return caption
+    return node.get("accessibility_caption")
 
 
-def _ytdlp_json(url: str, extra_args: list[str] | None = None) -> dict[str, Any]:
+def looks_like_real_transcript(text: str | None) -> bool:
+    if not text:
+        return False
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if len(cleaned) < 40:
+        return False
+    if cleaned.count(" ") < 4 and len(cleaned) < 80:
+        return False
+    return True
+
+
+def _normalize_reel_url(url: str) -> str:
+    match = re.search(r"instagram\.com/(?:reel|p|tv)/([^/?#]+)", url)
+    if match:
+        return f"https://www.instagram.com/reel/{match.group(1)}/"
+    return url
+
+
+def _prime_guest_client(username: str | None = None) -> httpx.Client:
+    """Create an httpx client with Instagram guest cookies + CSRF."""
+    client = httpx.Client(headers=_browser_headers(username), follow_redirects=True, timeout=REQUEST_TIMEOUT)
+    try:
+        home = client.get("https://www.instagram.com/")
+        csrf = client.cookies.get("csrftoken")
+        if not csrf:
+            csrf = uuid.uuid4().hex
+            client.cookies.set("csrftoken", csrf, domain=".instagram.com")
+        client.headers.update(_browser_headers(username, csrf=csrf))
+        # Touch the profile HTML once so subsequent API calls look like a real visit.
+        if username:
+            client.get(f"https://www.instagram.com/{username}/")
+        _ = home.status_code
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Guest session prime failed: %s", exc)
+    return client
+
+
+def _fetch_web_profile(client: httpx.Client, username: str) -> dict[str, Any] | None:
+    url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
+    response = client.get(url)
+    if response.status_code == 429:
+        raise InstagramFreeError("rate_limited")
+    if response.status_code != 200:
+        logger.info("web_profile_info HTTP %s for @%s", response.status_code, username)
+        return None
+    user = response.json().get("data", {}).get("user")
+    return user
+
+
+def _fetch_user_feed(client: httpx.Client, username: str, count: int = 24) -> list[dict[str, Any]]:
+    """Fallback: /api/v1/feed/user/<username>/username/ — no web_profile_info needed."""
+    url = f"https://www.instagram.com/api/v1/feed/user/{username}/username/"
+    response = client.get(url, params={"count": count})
+    if response.status_code == 429:
+        raise InstagramFreeError("rate_limited")
+    if response.status_code != 200:
+        logger.info("user feed HTTP %s for @%s", response.status_code, username)
+        return []
+    items = response.json().get("items") or []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _fetch_clips(client: httpx.Client, user_id: str, count: int = 20) -> list[dict[str, Any]]:
+    url = "https://www.instagram.com/api/v1/clips/user/"
+    response = client.post(
+        url,
+        data={
+            "target_user_id": user_id,
+            "page_size": str(count),
+            "include_feed_video": "true",
+        },
+    )
+    if response.status_code == 429:
+        raise InstagramFreeError("rate_limited")
+    if response.status_code != 200:
+        logger.info("clips/user HTTP %s for user_id=%s", response.status_code, user_id)
+        return []
+    items = response.json().get("items") or []
+    nodes: list[dict[str, Any]] = []
+    for item in items:
+        media = item.get("media") if isinstance(item, dict) else None
+        if isinstance(media, dict):
+            nodes.append(media)
+    return nodes
+
+
+def _nodes_from_profile(user: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    edges = user.get("edge_owner_to_timeline_media", {}).get("edges") or []
+    nodes: list[dict[str, Any]] = []
+    for edge in edges:
+        node = edge.get("node") or {}
+        if not node.get("is_video"):
+            continue
+        nodes.append(node)
+        if len(nodes) >= limit:
+            break
+    return nodes
+
+
+def _payload_from_node(node: dict[str, Any]) -> FreeReelPayload | None:
+    shortcode = str(node.get("shortcode") or node.get("code") or "")
+    if not shortcode:
+        return None
+    # Skip non-video timeline posts when product_type is present.
+    product = node.get("product_type") or node.get("media_type")
+    is_video = bool(node.get("is_video") or node.get("video_versions") or product in {2, "clips", "reel", "reels"})
+    if product in {1, "photo", "carousel_container"} and not node.get("video_versions"):
+        return None
+    if not is_video and not node.get("video_url"):
+        # Feed items: media_type 2 = video
+        if node.get("media_type") not in {2, "2", None}:
+            if not node.get("video_versions"):
+                return None
+
+    caption = _caption_from_node(node)
+    title = (caption or "Instagram Reel").strip()[:300]
+    video_versions = node.get("video_versions") or []
+    video_url = node.get("video_url")
+    if not video_url and video_versions:
+        video_url = video_versions[0].get("url")
+
+    likes = (
+        (node.get("edge_liked_by") or {}).get("count")
+        or (node.get("edge_media_preview_like") or {}).get("count")
+        or node.get("like_count")
+        or 0
+    )
+    comments = (
+        (node.get("edge_media_to_comment") or {}).get("count")
+        or node.get("comment_count")
+        or 0
+    )
+    views = (
+        node.get("video_view_count")
+        or node.get("video_play_count")
+        or node.get("play_count")
+        or node.get("view_count")
+        or 0
+    )
+    taken = node.get("taken_at_timestamp") or node.get("taken_at")
+    image = node.get("display_url") or node.get("thumbnail_src")
+    if not image:
+        candidates = (node.get("image_versions2") or {}).get("candidates") or []
+        if candidates:
+            image = candidates[0].get("url")
+
+    return FreeReelPayload(
+        external_id=shortcode,
+        title=title,
+        caption=caption,
+        transcript=None,
+        instagram_url=f"https://www.instagram.com/reel/{shortcode}/",
+        thumbnail_url=image,
+        video_url=video_url,
+        duration_seconds=int(node.get("video_duration") or 0),
+        views_count=int(views or 0),
+        likes_count=int(likes or 0),
+        comments_count=int(comments or 0),
+        shares_count=0,
+        overlay_text=None,
+        posted_at=_parse_timestamp(taken),
+    )
+
+
+def _ytdlp_json(url: str) -> dict[str, Any]:
     cmd = [
         "yt-dlp",
         "--skip-download",
         "--no-playlist",
         "-J",
         "--no-warnings",
-        *(extra_args or []),
+        "--socket-timeout",
+        "15",
         url,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=45, check=False)
     if result.returncode != 0:
         raise InstagramFreeError(
-            f"yt-dlp failed for {url}: {(result.stderr or result.stdout or 'unknown error')[:400]}"
+            f"yt-dlp failed for {url}: {(result.stderr or result.stdout or 'unknown error')[:300]}"
         )
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise InstagramFreeError(f"yt-dlp returned invalid JSON for {url}") from exc
+    return json.loads(result.stdout)
 
 
 def _download_audio(url: str, workdir: Path) -> Path | None:
@@ -141,30 +317,24 @@ def _download_audio(url: str, workdir: Path) -> Path | None:
         "0",
         "--no-playlist",
         "--no-warnings",
+        "--socket-timeout",
+        "20",
         "-o",
         outtmpl,
         url,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180, check=False)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=90, check=False)
     if result.returncode != 0:
-        logger.warning("Audio download failed for %s: %s", url, (result.stderr or "")[:300])
+        logger.warning("Audio download failed for %s: %s", url, (result.stderr or "")[:200])
         return None
     candidates = sorted(workdir.glob("audio.*"))
     return candidates[0] if candidates else None
 
 
-def _normalize_reel_url(url: str) -> str:
-    match = re.search(r"instagram\.com/(?:reel|p|tv)/([^/?#]+)", url)
-    if match:
-        return f"https://www.instagram.com/reel/{match.group(1)}/"
-    return url
-
-
 def _download_audio_from_direct(url: str, workdir: Path) -> Path | None:
-    """Fallback when yt-dlp is rate-limited but we still have a CDN media URL."""
     target = workdir / "direct.mp4"
     try:
-        with httpx.Client(follow_redirects=True, timeout=120.0, headers={"User-Agent": USER_AGENT}) as client:
+        with httpx.Client(follow_redirects=True, timeout=60.0, headers={"User-Agent": USER_AGENT}) as client:
             with client.stream("GET", url) as response:
                 response.raise_for_status()
                 with target.open("wb") as handle:
@@ -192,11 +362,11 @@ def _download_audio_from_direct(url: str, workdir: Path) -> Path | None:
         ],
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=90,
         check=False,
     )
     if result.returncode != 0 or not wav.exists():
-        logger.warning("ffmpeg extract failed: %s", (result.stderr or "")[:300])
+        logger.warning("ffmpeg extract failed: %s", (result.stderr or "")[:200])
         return None
     return wav
 
@@ -207,19 +377,22 @@ def enrich_reel_from_url(
     transcribe: bool = True,
     existing: FreeReelPayload | None = None,
 ) -> FreeReelPayload:
-    """Fetch metadata (and optional speech transcript) for a single reel URL."""
     webpage = _normalize_reel_url(url)
     info: dict[str, Any] = {}
     try:
         info = _ytdlp_json(webpage)
-    except InstagramFreeError as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.warning("yt-dlp metadata failed for %s: %s", webpage, exc)
         if existing is None:
-            raise
+            raise InstagramFreeError(str(exc)) from exc
 
-    shortcode = str(info.get("id") or info.get("display_id") or (existing.external_id if existing else "") or "")
+    shortcode = str(
+        info.get("id") or info.get("display_id") or (existing.external_id if existing else "") or ""
+    )
     caption = info.get("description") or (existing.caption if existing else None)
-    title = (caption or info.get("title") or (existing.title if existing else None) or "Instagram Reel").strip()[:300]
+    title = (
+        caption or info.get("title") or (existing.title if existing else None) or "Instagram Reel"
+    ).strip()[:300]
     duration = int(info.get("duration") or (existing.duration_seconds if existing else 0) or 0)
     views = int(
         info.get("view_count")
@@ -238,9 +411,11 @@ def enrich_reel_from_url(
     if transcribe and not looks_like_real_transcript(transcript):
         with tempfile.TemporaryDirectory(prefix="reelsai-audio-") as tmp:
             workdir = Path(tmp)
-            audio_path = _download_audio(webpage, workdir)
-            if audio_path is None and video_url:
+            audio_path = None
+            if video_url:
                 audio_path = _download_audio_from_direct(video_url, workdir)
+            if audio_path is None:
+                audio_path = _download_audio(webpage, workdir)
             if audio_path is not None:
                 spoken = transcribe_audio_file(audio_path)
                 if spoken:
@@ -253,7 +428,7 @@ def enrich_reel_from_url(
         transcript=transcript,
         instagram_url=webpage,
         thumbnail_url=thumbnail,
-        video_url=None,
+        video_url=video_url,
         duration_seconds=duration,
         views_count=views,
         likes_count=likes,
@@ -264,155 +439,137 @@ def enrich_reel_from_url(
     )
 
 
-def _fetch_profile_user(username: str) -> dict[str, Any]:
-    url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
-    with httpx.Client(headers=_browser_headers(username), follow_redirects=True, timeout=45.0) as client:
-        response = client.get(url)
-        if response.status_code == 429:
-            raise InstagramFreeError(
-                "Instagram временно ограничил запросы (429). Подождите несколько минут и попробуйте снова."
-            )
-        if response.status_code != 200:
-            raise InstagramFreeError(
-                f"Не удалось получить профиль @{username}: HTTP {response.status_code}"
-            )
-        payload = response.json()
-    user = payload.get("data", {}).get("user")
-    if not user:
-        raise InstagramFreeError(f"Профиль @{username} не найден или закрыт")
-    return user
-
-
-def _nodes_from_profile(user: dict[str, Any], limit: int) -> list[dict[str, Any]]:
-    edges = user.get("edge_owner_to_timeline_media", {}).get("edges") or []
-    nodes: list[dict[str, Any]] = []
-    for edge in edges:
-        node = edge.get("node") or {}
-        if not node.get("is_video"):
-            continue
-        nodes.append(node)
-        if len(nodes) >= limit:
-            break
-    return nodes
-
-
-def _payload_from_node(node: dict[str, Any], username: str) -> FreeReelPayload:
-    shortcode = str(node.get("shortcode") or node.get("code") or "")
-    caption = _caption_from_node(node)
-    title = (caption or "Instagram Reel").strip()[:300]
-    return FreeReelPayload(
-        external_id=shortcode,
-        title=title,
-        caption=caption,
-        transcript=None,
-        instagram_url=f"https://www.instagram.com/reel/{shortcode}/" if shortcode else None,
-        thumbnail_url=node.get("display_url") or node.get("thumbnail_src"),
-        video_url=node.get("video_url"),
-        duration_seconds=int(node.get("video_duration") or 0),
-        views_count=int(node.get("video_view_count") or node.get("video_play_count") or 0),
-        likes_count=int(
-            (node.get("edge_liked_by") or {}).get("count")
-            or (node.get("edge_media_preview_like") or {}).get("count")
-            or 0
-        ),
-        comments_count=int((node.get("edge_media_to_comment") or {}).get("count") or 0),
-        shares_count=0,
-        overlay_text=None,
-        posted_at=_parse_timestamp(node.get("taken_at_timestamp")),
-    )
-
-
 class InstagramFreeClient:
-    def fetch_competitor(
-        self,
-        username: str,
-        limit: int = 20,
-        *,
-        transcribe: bool = True,
-    ) -> FreeCompetitorPayload:
+    def fetch_competitor_metadata(self, username: str, limit: int = 20) -> FreeCompetitorPayload:
+        """Fast path: profile + reel cards only. No audio / STT."""
         username = username.lstrip("@").lower()
-        user = _fetch_profile_user(username)
-        nodes = _nodes_from_profile(user, limit=max(limit * 2, limit))
-        if not nodes:
-            raise InstagramFreeError(
-                f"У @{username} не нашлось публичных видео/рилсов через бесплатный парсер"
-            )
+        last_error = "unknown"
 
-        reels: list[FreeReelPayload] = []
-        for node in nodes:
-            base = _payload_from_node(node, username)
-            if not base.instagram_url:
-                continue
+        for attempt in range(2):
+            client = _prime_guest_client(username)
             try:
-                enriched = enrich_reel_from_url(
-                    base.instagram_url,
-                    transcribe=transcribe,
-                    existing=base,
+                user = _fetch_web_profile(client, username)
+                feed_items: list[dict[str, Any]] = []
+                clip_items: list[dict[str, Any]] = []
+
+                if user:
+                    user_id = str(user.get("id") or user.get("pk") or "")
+                    if user_id:
+                        try:
+                            clip_items = _fetch_clips(client, user_id, count=limit)
+                        except InstagramFreeError:
+                            raise
+                        except Exception as exc:  # noqa: BLE001
+                            logger.info("clips fetch skipped: %s", exc)
+                    feed_items = _nodes_from_profile(user, limit=limit * 2)
+                else:
+                    feed_items = _fetch_user_feed(client, username, count=max(limit * 2, 24))
+                    if feed_items:
+                        # Synthesize minimal user from first item owner.
+                        owner = feed_items[0].get("user") or {}
+                        user = {
+                            "full_name": owner.get("full_name"),
+                            "biography": None,
+                            "profile_pic_url": owner.get("profile_pic_url"),
+                            "profile_pic_url_hd": owner.get("profile_pic_url"),
+                            "edge_owner_to_timeline_media": {"count": len(feed_items)},
+                            "edge_followed_by": {"count": 0},
+                            "edge_follow": {"count": 0},
+                        }
+
+                nodes: list[dict[str, Any]] = []
+                seen: set[str] = set()
+                for node in clip_items + feed_items:
+                    code = str(node.get("shortcode") or node.get("code") or "")
+                    if not code or code in seen:
+                        continue
+                    seen.add(code)
+                    nodes.append(node)
+                    if len(nodes) >= limit:
+                        break
+
+                if not user:
+                    raise InstagramFreeError(f"Профиль @{username} не найден или временно недоступен")
+                if not nodes:
+                    raise InstagramFreeError(f"У @{username} не нашлось публичных рилсов")
+
+                reels: list[FreeReelPayload] = []
+                for node in nodes:
+                    payload = _payload_from_node(node)
+                    if payload:
+                        reels.append(payload)
+                    if len(reels) >= limit:
+                        break
+
+                if not reels:
+                    raise InstagramFreeError(f"Не удалось разобрать рилсы @{username}")
+
+                return FreeCompetitorPayload(
+                    username=username,
+                    full_name=user.get("full_name"),
+                    bio=user.get("biography"),
+                    avatar_url=user.get("profile_pic_url_hd") or user.get("profile_pic_url"),
+                    posts_count=int(
+                        (user.get("edge_owner_to_timeline_media") or {}).get("count") or len(reels)
+                    ),
+                    followers_count=int((user.get("edge_followed_by") or {}).get("count") or 0),
+                    following_count=int((user.get("edge_follow") or {}).get("count") or 0),
+                    reels=reels,
                 )
-                # Prefer richer profile counters when yt-dlp omits them.
-                if not enriched.views_count:
-                    enriched.views_count = base.views_count
-                if not enriched.likes_count:
-                    enriched.likes_count = base.likes_count
-                if not enriched.comments_count:
-                    enriched.comments_count = base.comments_count
-                if not enriched.duration_seconds:
-                    enriched.duration_seconds = base.duration_seconds
-                if not enriched.thumbnail_url:
-                    enriched.thumbnail_url = base.thumbnail_url
-                reels.append(enriched)
-            except Exception as exc:  # noqa: BLE001 - keep loading other reels
-                logger.warning("Skipping reel %s: %s", base.instagram_url, exc)
-                reels.append(base)
-            if len(reels) >= limit:
-                break
+            except InstagramFreeError as exc:
+                last_error = str(exc)
+                if last_error == "rate_limited" and attempt == 0:
+                    time.sleep(1.5)
+                    continue
+                if last_error == "rate_limited":
+                    raise InstagramFreeError(
+                        "Instagram временно ограничил запросы (429). "
+                        "Подождите пару минут и попробуйте снова — кэш уже сохранённых "
+                        "конкурентов открывается мгновенно."
+                    ) from exc
+                raise
+            except Exception as exc:  # noqa: BLE001
+                last_error = str(exc)
+                logger.warning("Metadata fetch attempt %s failed: %s", attempt + 1, exc)
+                if attempt == 0:
+                    time.sleep(0.8)
+                    continue
+                raise InstagramFreeError(
+                    f"Не удалось загрузить @{username}: {last_error}"
+                ) from exc
+            finally:
+                client.close()
 
-        if not reels:
-            raise InstagramFreeError(f"Не удалось загрузить рилсы @{username}")
-
-        return FreeCompetitorPayload(
-            username=username,
-            full_name=user.get("full_name"),
-            bio=user.get("biography"),
-            avatar_url=user.get("profile_pic_url_hd") or user.get("profile_pic_url"),
-            posts_count=int(user.get("edge_owner_to_timeline_media", {}).get("count") or len(reels)),
-            followers_count=int(user.get("edge_followed_by", {}).get("count") or 0),
-            following_count=int(user.get("edge_follow", {}).get("count") or 0),
-            reels=reels,
-        )
+        raise InstagramFreeError(f"Не удалось загрузить @{username}: {last_error}")
 
     def refresh_transcripts(
         self,
         items: list[tuple[str, FreeReelPayload | None]],
         *,
         only_missing: bool = True,
+        max_items: int = 8,
     ) -> list[FreeReelPayload]:
-        """Re-download audio and transcribe existing reel URLs."""
         updated: list[FreeReelPayload] = []
+        processed = 0
         for url, existing in items:
             if not url:
                 continue
-            has_speech = bool(existing and existing.transcript and len(existing.transcript.strip()) >= 40)
+            has_speech = bool(
+                existing and existing.transcript and looks_like_real_transcript(existing.transcript)
+            )
             if only_missing and has_speech:
+                if existing:
+                    updated.append(existing)
+                continue
+            if processed >= max_items:
                 if existing:
                     updated.append(existing)
                 continue
             try:
                 updated.append(enrich_reel_from_url(url, transcribe=True, existing=existing))
+                processed += 1
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Transcript refresh failed for %s: %s", url, exc)
                 if existing:
                     updated.append(existing)
         return updated
-
-
-def looks_like_real_transcript(text: str | None) -> bool:
-    if not text:
-        return False
-    cleaned = re.sub(r"\s+", " ", text).strip()
-    if len(cleaned) < 40:
-        return False
-    # Apify sometimes returned tiny caption-like stubs.
-    if cleaned.count(" ") < 4 and len(cleaned) < 80:
-        return False
-    return True

@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session, col, select
 
-from app.db import get_session
+from app.db import engine, get_session
 from app.models import Competitor, CompetitorStatus, Reel, ReelStatus
 from app.schemas import CompetitorLoadRequest, CompetitorLoadResponse, CompetitorRead, ReelListItem
 from app.services.instagram_free import (
@@ -13,7 +13,6 @@ from app.services.instagram_free import (
     InstagramFreeError,
     looks_like_real_transcript,
 )
-from app.services.seed import ensure_seed_data
 from app.services.serializers import competitor_to_read, reel_to_list_item
 
 router = APIRouter(prefix="/competitors", tags=["competitors"])
@@ -51,7 +50,9 @@ def apply_reel_payload(session: Session, competitor: Competitor, item: FreeReelP
         reel.transcript = item.transcript
     reel.instagram_url = item.instagram_url or reel.instagram_url
     reel.thumbnail_url = item.thumbnail_url or reel.thumbnail_url
-    reel.video_url = item.video_url
+    # Keep a usable media URL for background STT when Instagram later rate-limits yt-dlp.
+    if item.video_url:
+        reel.video_url = item.video_url
     reel.duration_seconds = item.duration_seconds or reel.duration_seconds
     reel.views_count = item.views_count or reel.views_count
     reel.likes_count = item.likes_count or reel.likes_count
@@ -64,7 +65,6 @@ def apply_reel_payload(session: Session, competitor: Competitor, item: FreeReelP
     spoken = (item.transcript or "").strip()
     caption = (item.caption or item.title or "").strip()
     if spoken and looks_like_real_transcript(spoken):
-        # Spoken audio is the remix source of truth.
         reel.hook = spoken[:200]
         reel.script = spoken
     else:
@@ -76,6 +76,60 @@ def apply_reel_payload(session: Session, competitor: Competitor, item: FreeReelP
         reel.cta = "Сохрани и попробуй этот формат в своём следующем рилсе."
     session.add(reel)
     return reel
+
+
+def _background_transcribe(competitor_id: UUID) -> None:
+    """Fill missing spoken transcripts without blocking the load API."""
+    client = InstagramFreeClient()
+    with Session(engine) as session:
+        competitor = session.get(Competitor, competitor_id)
+        if competitor is None:
+            return
+        reels = get_latest_reels(session, competitor_id)
+        missing = [
+            reel
+            for reel in reels
+            if not looks_like_real_transcript(reel.transcript)
+            and (reel.instagram_url or reel.external_id)
+        ]
+        if not missing:
+            return
+
+        items = [
+            (
+                reel.instagram_url or f"https://www.instagram.com/reel/{reel.external_id}/",
+                FreeReelPayload(
+                    external_id=reel.external_id or "",
+                    title=reel.title,
+                    caption=reel.caption,
+                    transcript=reel.transcript,
+                    instagram_url=reel.instagram_url,
+                    thumbnail_url=reel.thumbnail_url,
+                    video_url=reel.video_url,
+                    duration_seconds=reel.duration_seconds,
+                    views_count=reel.views_count,
+                    likes_count=reel.likes_count,
+                    comments_count=reel.comments_count,
+                    shares_count=reel.shares_count,
+                    overlay_text=reel.overlay_text,
+                    posted_at=reel.posted_at,
+                ),
+            )
+            for reel in missing
+        ]
+        try:
+            refreshed = client.refresh_transcripts(items, only_missing=True, max_items=8)
+        except Exception as exc:  # noqa: BLE001
+            competitor.last_error = f"Transcript background job: {exc}"
+            session.add(competitor)
+            session.commit()
+            return
+
+        for item in refreshed:
+            apply_reel_payload(session, competitor, item)
+        competitor.last_error = None
+        session.add(competitor)
+        session.commit()
 
 
 @router.get("", response_model=list[CompetitorRead])
@@ -108,6 +162,7 @@ def list_competitor_reels(
 @router.post("/load", response_model=CompetitorLoadResponse)
 async def load_competitor(
     payload: CompetitorLoadRequest,
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ) -> CompetitorLoadResponse:
     username = normalize_username(payload.username)
@@ -120,94 +175,44 @@ async def load_competitor(
     ).first()
     existing_reels = get_latest_reels(session, existing_competitor.id) if existing_competitor else []
 
+    # Soft cache: return instantly whenever we already have reels for this handle.
     if (
         existing_competitor is not None
+        and existing_reels
         and existing_competitor.last_scraped_at is not None
         and not payload.force_refresh
         and datetime.now(timezone.utc) - existing_competitor.last_scraped_at < CACHE_TTL
-        and existing_reels
-        and all(looks_like_real_transcript(reel.transcript) for reel in existing_reels)
     ):
+        needs_speech = any(not looks_like_real_transcript(reel.transcript) for reel in existing_reels)
+        if needs_speech:
+            background_tasks.add_task(_background_transcribe, existing_competitor.id)
         return CompetitorLoadResponse(
             competitor=competitor_to_read(existing_competitor),
             reels=[reel_to_list_item(reel, existing_competitor.username) for reel in existing_reels],
             source="cache",
-            message="Загружено из PostgreSQL-кэша без новых запросов к Instagram",
+            message=(
+                "Мгновенно из кэша. Расшифровка речи догружается в фоне."
+                if needs_speech
+                else "Загружено из кэша"
+            ),
         )
 
-    # Prefer refreshing transcripts for already-known reel URLs (no Apify, free tools).
-    if existing_competitor and existing_reels and (
-        payload.force_refresh
-        or any(not looks_like_real_transcript(reel.transcript) for reel in existing_reels)
-    ):
-        try:
-            items = [
-                (
-                    reel.instagram_url or f"https://www.instagram.com/reel/{reel.external_id}/",
-                    FreeReelPayload(
-                        external_id=reel.external_id or "",
-                        title=reel.title,
-                        caption=reel.caption,
-                        transcript=reel.transcript,
-                        instagram_url=reel.instagram_url,
-                        thumbnail_url=reel.thumbnail_url,
-                        video_url=reel.video_url,
-                        duration_seconds=reel.duration_seconds,
-                        views_count=reel.views_count,
-                        likes_count=reel.likes_count,
-                        comments_count=reel.comments_count,
-                        shares_count=reel.shares_count,
-                        overlay_text=reel.overlay_text,
-                        posted_at=reel.posted_at,
-                    ),
-                )
-                for reel in existing_reels
-                if reel.instagram_url or reel.external_id
-            ]
-            refreshed = client.refresh_transcripts(items, only_missing=not payload.force_refresh)
-            for item in refreshed:
-                apply_reel_payload(session, existing_competitor, item)
-            existing_competitor.status = CompetitorStatus.ready
-            existing_competitor.last_error = None
-            existing_competitor.last_scraped_at = datetime.now(timezone.utc)
-            session.add(existing_competitor)
-            session.commit()
-            reels = get_latest_reels(session, existing_competitor.id)
+    try:
+        data = client.fetch_competitor_metadata(username, limit=20)
+    except InstagramFreeError as exc:
+        # Never substitute another creator / seed demo for the requested handle.
+        if existing_competitor is not None and existing_reels:
             return CompetitorLoadResponse(
                 competitor=competitor_to_read(existing_competitor),
-                reels=[reel_to_list_item(reel, existing_competitor.username) for reel in reels],
-                source="free",
-                message="Расшифровка речи через yt-dlp + бесплатный Speech-to-Text (без Apify)",
-            )
-        except InstagramFreeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=502, detail=f"Free ingest failed: {exc}") from exc
-
-    try:
-        data = client.fetch_competitor(username, limit=20, transcribe=True)
-    except InstagramFreeError as exc:
-        # Keep demo seed as last resort for empty DB only.
-        if existing_competitor is None and not existing_reels:
-            competitor = ensure_seed_data(session)
-            competitor.status = CompetitorStatus.ready
-            session.add(competitor)
-            session.commit()
-            session.refresh(competitor)
-            reels = session.exec(
-                select(Reel)
-                .where(Reel.competitor_id == competitor.id)
-                .order_by(col(Reel.views_count).desc())
-            ).all()
-            return CompetitorLoadResponse(
-                competitor=competitor_to_read(competitor),
-                reels=[reel_to_list_item(reel, competitor.username) for reel in reels],
-                source="seed",
-                message=f"Бесплатный парсер Instagram недоступен ({exc}). Показаны демо-данные.",
+                reels=[
+                    reel_to_list_item(reel, existing_competitor.username) for reel in existing_reels
+                ],
+                source="cache",
+                message=f"Instagram временно недоступен ({exc}). Показаны сохранённые рилсы.",
             )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"Free ingest failed: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"Не удалось загрузить конкурента: {exc}") from exc
 
     competitor = existing_competitor or Competitor(username=username)
     competitor.username = username
@@ -229,10 +234,12 @@ async def load_competitor(
         apply_reel_payload(session, competitor, item)
     session.commit()
 
+    background_tasks.add_task(_background_transcribe, competitor.id)
+
     reels = get_latest_reels(session, competitor.id)
     return CompetitorLoadResponse(
         competitor=competitor_to_read(competitor),
         reels=[reel_to_list_item(reel, competitor.username) for reel in reels],
         source="free",
-        message="Загружено бесплатно: Instagram web + yt-dlp + Speech-to-Text",
+        message="Рилсы загружены. Текст речи догружается в фоне — обновите карточку через минуту.",
     )

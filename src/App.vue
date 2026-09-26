@@ -148,7 +148,7 @@ async function loadInitialCompetitor() {
 
 async function loadCompetitor(forceRefresh = false) {
   competitorLoading.value = true
-  competitorMessage.value = ''
+  competitorMessage.value = 'Загружаем профиль и рилсы…'
   saveError.value = ''
 
   try {
@@ -173,8 +173,27 @@ async function loadCompetitor(forceRefresh = false) {
     competitorMessage.value = body.message
     competitorHandle.value = `@${body.competitor.username}`
     await loadHomeReels()
+
+    // Speech transcripts arrive in the background — refresh once shortly after.
+    if (body.source === 'free' || String(body.message || '').includes('фоне')) {
+      window.setTimeout(async () => {
+        try {
+          const reelsResponse = await fetch(
+            `/api/competitors/${body.competitor.id}/reels`,
+            { cache: 'no-store' },
+          )
+          if (reelsResponse.ok) {
+            competitorReels.value = await reelsResponse.json()
+            competitorMessage.value = 'Рилсы готовы. Расшифровка речи обновлена, где удалось.'
+          }
+        } catch {
+          // Keep the already-shown reels if the quiet refresh fails.
+        }
+      }, 25000)
+    }
   } catch (error) {
     saveError.value = error.message
+    competitorMessage.value = ''
   } finally {
     competitorLoading.value = false
   }
@@ -388,7 +407,7 @@ onBeforeUnmount(() => {
             :disabled="competitorLoading"
             @click="loadCompetitor(false)"
           >
-            {{ competitorLoading ? 'Расшифровываем...' : 'Загрузить' }}
+            {{ competitorLoading ? 'Загружаем…' : 'Загрузить' }}
             <ArrowUpRight :size="17" />
           </button>
         </div>
