@@ -36,9 +36,21 @@ jobs:
           fi
           sudo chown -R "$USER":"$USER" /opt/reelsai
 
+      - name: Ensure swap for small instance builds
+        run: |
+          if [ "$(swapon --show | wc -l)" -eq 0 ]; then
+            sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile
+            sudo swapon /swapfile
+          fi
+          free -m
+
       - name: Build and start application
         working-directory: /opt/reelsai
-        run: docker compose up --detach --build --remove-orphans
+        run: |
+          docker compose build --pull
+          docker compose up --detach --remove-orphans
 
       - name: Verify deployment
         run: |

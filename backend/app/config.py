@@ -10,7 +10,6 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://reelsai:reelsai@localhost:5432/reelsai"
     editor_ip: str | None = None
     seed_on_startup: bool = True
-    whisper_model: str = "tiny"
 
 
 @lru_cache

@@ -178,7 +178,7 @@ async def load_competitor(
                 competitor=competitor_to_read(existing_competitor),
                 reels=[reel_to_list_item(reel, existing_competitor.username) for reel in reels],
                 source="free",
-                message="Расшифровка речи через yt-dlp + Whisper (бесплатно, без Apify)",
+                message="Расшифровка речи через yt-dlp + бесплатный Speech-to-Text (без Apify)",
             )
         except InstagramFreeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -235,5 +235,5 @@ async def load_competitor(
         competitor=competitor_to_read(competitor),
         reels=[reel_to_list_item(reel, competitor.username) for reel in reels],
         source="free",
-        message="Загружено бесплатно: Instagram web + yt-dlp + Whisper",
+        message="Загружено бесплатно: Instagram web + yt-dlp + Speech-to-Text",
     )
