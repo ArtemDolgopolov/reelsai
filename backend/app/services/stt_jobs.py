@@ -20,7 +20,7 @@ from app.services.instagram_free import (
 logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
-_in_flight: set[str] = set()
+_events: dict[str, threading.Event] = {}
 
 
 def _payload_from_reel(reel: Reel) -> FreeReelPayload:
@@ -64,10 +64,20 @@ def ensure_reel_transcript(session: Session, reel: Reel, competitor: Competitor 
         return reel
 
     key = str(reel.id)
+    owner = False
     with _lock:
-        if key in _in_flight:
-            return reel
-        _in_flight.add(key)
+        event = _events.get(key)
+        if event is None:
+            event = threading.Event()
+            _events[key] = event
+            owner = True
+
+    if not owner:
+        # Another worker is already transcribing this reel — wait for it.
+        logger.info("Waiting for in-flight STT for %s", reel.external_id or key)
+        event.wait(timeout=100)
+        session.refresh(reel)
+        return reel
 
     try:
         from app.routers.competitors import apply_reel_payload
@@ -87,6 +97,7 @@ def ensure_reel_transcript(session: Session, reel: Reel, competitor: Competitor 
             f"https://www.instagram.com/reel/{reel.external_id}/" if reel.external_id else ""
         )
         if not url and not video_url:
+            logger.warning("No media URL for STT on reel %s", reel.external_id or reel.id)
             return reel
 
         updated = enrich_reel_from_url(url or "https://www.instagram.com/", transcribe=True, existing=payload)
@@ -105,15 +116,18 @@ def ensure_reel_transcript(session: Session, reel: Reel, competitor: Competitor 
         return reel
     except Exception as exc:  # noqa: BLE001
         logger.warning("ensure_reel_transcript failed for %s: %s", reel.id, exc)
-        session.rollback()
+        try:
+            session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
         return reel
     finally:
+        event.set()
         with _lock:
-            _in_flight.discard(key)
+            _events.pop(key, None)
 
 
 def _transcribe_ids_worker(reel_ids: list[UUID]) -> None:
-    client = InstagramFreeClient()
     for reel_id in reel_ids:
         try:
             with Session(engine) as session:
