@@ -15,6 +15,7 @@ from app.services.instagram_free import (
     looks_like_real_transcript,
 )
 from app.services.serializers import competitor_to_read, reel_to_list_item
+from app.services.transcript_sections import DEFAULT_CTA, split_transcript_into_sections
 
 router = APIRouter(prefix="/competitors", tags=["competitors"])
 CACHE_TTL = timedelta(hours=6)
@@ -64,18 +65,21 @@ def apply_reel_payload(session: Session, competitor: Competitor, item: FreeReelP
     reel.posted_at = item.posted_at or reel.posted_at
     reel.status = ReelStatus.ready
 
-    spoken = (item.transcript or "").strip()
+    spoken = (item.transcript or reel.transcript or "").strip()
     caption = (item.caption or item.title or "").strip()
     if spoken and looks_like_real_transcript(spoken):
-        reel.hook = spoken[:200]
-        reel.script = spoken
+        hook, script, cta = split_transcript_into_sections(spoken, caption)
+        reel.hook = hook
+        reel.script = script
+        reel.cta = cta
     else:
+        hook, script, cta = split_transcript_into_sections(None, caption)
         if not reel.hook:
-            reel.hook = caption[:200]
+            reel.hook = hook
         if not reel.script:
-            reel.script = caption
-    if not reel.cta:
-        reel.cta = "Сохрани и попробуй этот формат в своём следующем рилсе."
+            reel.script = script
+        if not reel.cta:
+            reel.cta = cta or DEFAULT_CTA
     session.add(reel)
     return reel
 

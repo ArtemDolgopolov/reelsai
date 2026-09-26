@@ -3,7 +3,6 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   ArrowLeft,
   ArrowUpRight,
-  Bolt,
   Camera,
   Check,
   ChevronRight,
@@ -42,7 +41,6 @@ const homeReels = ref([])
 const homeLoading = ref(true)
 const selectedReel = ref(null)
 const detailLoading = ref(false)
-const detailTab = ref('analysis')
 const editingSection = ref(null)
 const draft = ref('')
 const saveState = ref('idle')
@@ -129,7 +127,6 @@ async function loadHomeReels() {
 }
 
 async function openReel(reelId) {
-  detailTab.value = 'analysis'
   detailLoading.value = true
   saveError.value = ''
   editingSection.value = null
@@ -340,7 +337,7 @@ onBeforeUnmount(() => {
           <div>
             <span class="eyebrow">Вдохновение на каждый день</span>
             <h1>Главное</h1>
-            <p>Топ рилсов по просмотрам среди загруженных конкурентов.</p>
+            <p>20 случайных рилсов из загруженных конкурентов.</p>
           </div>
           <label class="search-field">
             <Search :size="17" />
@@ -580,25 +577,7 @@ onBeforeUnmount(() => {
               <span class="stat-pill duration"><Play :size="15" /> <strong>{{ selectedDurationLabel }}</strong></span>
             </div>
 
-            <div class="detail-tabs" role="tablist">
-              <button
-                :class="{ active: detailTab === 'analysis' }"
-                type="button"
-                @click="detailTab = 'analysis'"
-              >
-                <Sparkles :size="16" />
-                AI Анализ
-              </button>
-              <button
-                :class="{ active: detailTab === 'description' }"
-                type="button"
-                @click="detailTab = 'description'"
-              >
-                Описание и расшифровка
-              </button>
-            </div>
-
-            <div v-if="detailTab === 'analysis'" class="insight-list">
+            <div class="insight-list">
               <div v-if="saveState === 'saved'" class="save-notice success">
                 <Check :size="15" />
                 Изменения сохранены в PostgreSQL
@@ -647,9 +626,11 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
                 </div>
-                <blockquote v-else>«{{ selectedReel.hook }}»</blockquote>
+                <blockquote v-else>
+                  «{{ selectedReel.hook || 'Расшифровка речи пока недоступна — hook появится после STT.' }}»
+                </blockquote>
                 <span class="counter">
-                  {{ editingSection === 'hook' ? draft.length : selectedReel.hook.length }}/{{ sectionLimits.hook }}
+                  {{ editingSection === 'hook' ? draft.length : (selectedReel.hook || '').length }}/{{ sectionLimits.hook }}
                 </span>
               </article>
 
@@ -692,11 +673,12 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
                 </div>
-                <ol v-else>
+                <ol v-else-if="scriptLines.length">
                   <li v-for="line in scriptLines" :key="line">{{ line }}</li>
                 </ol>
+                <p v-else class="preserve-lines">Скрипт появится, когда будет расшифровка речи.</p>
                 <span class="counter">
-                  {{ editingSection === 'script' ? draft.length : selectedReel.script.length }}/{{ sectionLimits.script }}
+                  {{ editingSection === 'script' ? draft.length : (selectedReel.script || '').length }}/{{ sectionLimits.script }}
                 </span>
               </article>
 
@@ -739,9 +721,11 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
                 </div>
-                <p v-else class="preserve-lines">{{ selectedReel.cta }}</p>
+                <p v-else class="preserve-lines">
+                  {{ selectedReel.cta || 'Сохрани и попробуй этот формат в своём следующем рилсе.' }}
+                </p>
                 <span class="counter">
-                  {{ editingSection === 'cta' ? draft.length : selectedReel.cta.length }}/{{ sectionLimits.cta }}
+                  {{ editingSection === 'cta' ? draft.length : (selectedReel.cta || '').length }}/{{ sectionLimits.cta }}
                 </span>
               </article>
 
@@ -749,33 +733,6 @@ onBeforeUnmount(() => {
                 <Lightbulb :size="19" />
                 <span><strong>Почему это работает</strong> {{ selectedReel.why_it_works }}</span>
               </div>
-            </div>
-
-            <div v-else class="transcript-panel">
-              <div class="transcript-block">
-                <span class="transcript-badge"><Bolt :size="14" /> Что говорит автор (аудио)</span>
-                <p class="preserve-lines">
-                  {{
-                    selectedReel.transcript && selectedReel.transcript.length >= 40
-                      ? selectedReel.transcript
-                      : 'Расшифровка речи пока недоступна. Нажмите «Загрузить» у конкурента ещё раз — достанем текст из аудио рилса бесплатно.'
-                  }}
-                </p>
-              </div>
-              <div v-if="selectedReel.caption" class="transcript-block caption-block">
-                <span class="transcript-badge muted">Подпись Instagram</span>
-                <p class="preserve-lines">{{ selectedReel.caption }}</p>
-              </div>
-              <a
-                v-if="selectedReel.instagram_url"
-                class="instagram-button primary-original inline-original"
-                :href="selectedReel.instagram_url"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <ExternalLink :size="15" />
-                Открыть оригинальный Reels
-              </a>
             </div>
           </div>
         </div>

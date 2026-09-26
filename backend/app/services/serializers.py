@@ -2,6 +2,8 @@ from datetime import datetime
 
 from app.models import Competitor, Reel
 from app.schemas import CompetitorRead, ReelDetail, ReelListItem
+from app.services.instagram_free import looks_like_real_transcript
+from app.services.transcript_sections import split_transcript_into_sections
 
 
 def format_duration(seconds: int) -> str:
@@ -21,6 +23,23 @@ def format_views(count: int) -> str:
 
 def competitor_to_read(competitor: Competitor) -> CompetitorRead:
     return CompetitorRead.model_validate(competitor, from_attributes=True)
+
+
+def analysis_sections(reel: Reel) -> tuple[str, str, str]:
+    """Prefer a structured split of spoken audio for Hook / Script / CTA."""
+    spoken = (reel.transcript or "").strip()
+    caption = (reel.caption or reel.title or "").strip()
+    if looks_like_real_transcript(spoken):
+        # Upgrade legacy rows where the whole transcript was dumped into script.
+        stored_script = (reel.script or "").strip()
+        if not stored_script or stored_script == spoken:
+            return split_transcript_into_sections(spoken, caption)
+    hook = (reel.hook or "").strip()
+    script = (reel.script or "").strip()
+    cta = (reel.cta or "").strip()
+    if not hook and not script:
+        return split_transcript_into_sections(spoken or None, caption)
+    return hook, script, cta
 
 
 def reel_to_list_item(reel: Reel, username: str) -> ReelListItem:
@@ -43,6 +62,7 @@ def reel_to_list_item(reel: Reel, username: str) -> ReelListItem:
 
 
 def reel_to_detail(reel: Reel, competitor: Competitor) -> ReelDetail:
+    hook, script, cta = analysis_sections(reel)
     return ReelDetail(
         id=reel.id,
         competitor_id=reel.competitor_id,
@@ -61,9 +81,9 @@ def reel_to_detail(reel: Reel, competitor: Competitor) -> ReelDetail:
         thumbnail_url=reel.thumbnail_url,
         video_url=reel.video_url,
         overlay_text=reel.overlay_text,
-        hook=reel.hook,
-        script=reel.script,
-        cta=reel.cta,
+        hook=hook,
+        script=script,
+        cta=cta,
         transcript=reel.transcript,
         why_it_works=reel.why_it_works,
         posted_at=reel.posted_at,

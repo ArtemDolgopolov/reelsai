@@ -18,7 +18,6 @@ SECTION_LIMITS = {
     "cta": 500,
 }
 SEED_USERNAME = "vibecoding_creator"
-PER_CREATOR_HOME = 4
 
 
 def require_editor(request: Request) -> None:
@@ -40,44 +39,30 @@ def list_reels(
     q: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> list[ReelListItem]:
-    """Home feed: most-viewed reels, capped per creator so one mega-account can't fill the grid."""
-    # Window function keeps the top N by views for each competitor, then we merge by views.
+    """Home feed: 20 completely random reels from loaded competitors."""
     rows = session.execute(
         text(
             """
-            WITH ranked AS (
-                SELECT
-                    r.id AS id,
-                    r.views_count AS views_count,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY r.competitor_id
-                        ORDER BY r.views_count DESC, r.posted_at DESC NULLS LAST
-                    ) AS rn
-                FROM reels r
-                JOIN competitors c ON c.id = r.competitor_id
-                WHERE c.username <> :seed_username
-            )
-            SELECT id
-            FROM ranked
-            WHERE rn <= :per_creator
-            ORDER BY views_count DESC
+            SELECT r.id
+            FROM reels r
+            JOIN competitors c ON c.id = r.competitor_id
+            WHERE c.username <> :seed_username
+            ORDER BY RANDOM()
             LIMIT :limit
             """
         ),
         {
             "seed_username": SEED_USERNAME,
-            "per_creator": PER_CREATOR_HOME,
             "limit": limit,
         },
     ).all()
 
     ordered_ids = [row[0] for row in rows]
     if not ordered_ids:
-        # Fallback for empty DB / only seed data.
         statement = (
             select(Reel, Competitor)
             .where(Reel.competitor_id == Competitor.id)
-            .order_by(col(Reel.views_count).desc())
+            .order_by(text("RANDOM()"))
             .limit(limit)
         )
         fallback = session.exec(statement).all()
