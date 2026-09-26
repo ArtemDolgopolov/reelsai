@@ -320,7 +320,7 @@ onBeforeUnmount(() => {
           <div>
             <span class="eyebrow">Вдохновение на каждый день</span>
             <h1>Главное</h1>
-            <p>Тренды, которые набирают обороты прямо сейчас.</p>
+            <p>Топ рилсов по просмотрам среди загруженных конкурентов.</p>
           </div>
           <label class="search-field">
             <Search :size="17" />
@@ -336,7 +336,7 @@ onBeforeUnmount(() => {
         <div class="section-heading">
           <div>
             <span class="live-dot"></span>
-            <strong>В тренде сегодня</strong>
+            <strong>Самые просматриваемые</strong>
           </div>
           <span>{{ homeLoading ? 'Загрузка...' : `Найдено ${filteredReels.length}` }}</span>
         </div>
@@ -432,7 +432,7 @@ onBeforeUnmount(() => {
           <div class="results-heading">
             <div>
               <h2>Найдено {{ competitorReels.length }} последних рилсов</h2>
-              <p>Отсортировано по вовлечённости</p>
+              <p>Отсортировано по просмотрам</p>
             </div>
             <span class="success-badge"><Check :size="14" /> {{ competitorMessage || 'Готово' }}</span>
           </div>

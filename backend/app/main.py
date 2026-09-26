@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+import logging
+import threading
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,7 +9,10 @@ from sqlmodel import Session
 from app.config import get_settings
 from app.db import engine
 from app.routers import competitors, health, reels
+from app.routers.competitors import backfill_missing_transcripts
 from app.services.seed import ensure_seed_data
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -16,6 +21,15 @@ async def lifespan(_: FastAPI):
     if settings.seed_on_startup:
         with Session(engine) as session:
             ensure_seed_data(session)
+
+    # Backfill spoken transcripts for every loaded creator in the background.
+    thread = threading.Thread(
+        target=backfill_missing_transcripts,
+        name="transcript-backfill",
+        daemon=True,
+    )
+    thread.start()
+    logger.info("Started transcript backfill thread")
     yield
 
 

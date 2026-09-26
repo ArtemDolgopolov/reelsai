@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -17,6 +18,7 @@ from app.services.serializers import competitor_to_read, reel_to_list_item
 
 router = APIRouter(prefix="/competitors", tags=["competitors"])
 CACHE_TTL = timedelta(hours=6)
+logger = logging.getLogger(__name__)
 
 
 def normalize_username(raw: str) -> str:
@@ -32,7 +34,7 @@ def get_latest_reels(session: Session, competitor_id: UUID) -> list[Reel]:
         session.exec(
             select(Reel)
             .where(Reel.competitor_id == competitor_id)
-            .order_by(col(Reel.posted_at).desc().nulls_last())
+            .order_by(col(Reel.views_count).desc(), col(Reel.posted_at).desc().nulls_last())
             .limit(20)
         ).all()
     )
@@ -85,12 +87,20 @@ def _background_transcribe(competitor_id: UUID) -> None:
         competitor = session.get(Competitor, competitor_id)
         if competitor is None:
             return
-        reels = get_latest_reels(session, competitor_id)
+        # Most-viewed first so remix-ready speech lands on the best reels.
+        reels = list(
+            session.exec(
+                select(Reel)
+                .where(Reel.competitor_id == competitor_id)
+                .order_by(col(Reel.views_count).desc())
+                .limit(20)
+            ).all()
+        )
         missing = [
             reel
             for reel in reels
             if not looks_like_real_transcript(reel.transcript)
-            and (reel.instagram_url or reel.external_id)
+            and (reel.video_url or reel.instagram_url or reel.external_id)
         ]
         if not missing:
             return
@@ -118,18 +128,37 @@ def _background_transcribe(competitor_id: UUID) -> None:
             for reel in missing
         ]
         try:
-            refreshed = client.refresh_transcripts(items, only_missing=True, max_items=8)
+            # Commit per reel so one failure doesn't wipe progress for the account.
+            for url, payload in items[:12]:
+                try:
+                    refreshed = client.refresh_transcripts(
+                        [(url, payload)],
+                        only_missing=True,
+                        max_items=1,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("STT failed for %s/%s: %s", competitor.username, url, exc)
+                    continue
+                for item in refreshed:
+                    apply_reel_payload(session, competitor, item)
+                    session.commit()
+            competitor.last_error = None
+            session.add(competitor)
+            session.commit()
         except Exception as exc:  # noqa: BLE001
             competitor.last_error = f"Transcript background job: {exc}"
             session.add(competitor)
             session.commit()
-            return
 
-        for item in refreshed:
-            apply_reel_payload(session, competitor, item)
-        competitor.last_error = None
-        session.add(competitor)
-        session.commit()
+
+def backfill_missing_transcripts() -> None:
+    """Queue speech STT across every competitor that still lacks transcripts."""
+    with Session(engine) as session:
+        competitors = list(session.exec(select(Competitor)).all())
+    for competitor in competitors:
+        if competitor.username == "vibecoding_creator":
+            continue
+        _background_transcribe(competitor.id)
 
 
 @router.get("", response_model=list[CompetitorRead])

@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import text
 from sqlmodel import Session, col, select
 
 from app.config import get_settings
@@ -16,6 +17,8 @@ SECTION_LIMITS = {
     "script": 2000,
     "cta": 500,
 }
+SEED_USERNAME = "vibecoding_creator"
+PER_CREATOR_HOME = 4
 
 
 def require_editor(request: Request) -> None:
@@ -37,21 +40,67 @@ def list_reels(
     q: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> list[ReelListItem]:
-    statement = (
-        select(Reel, Competitor)
-        .where(Reel.competitor_id == Competitor.id)
-        .order_by(col(Reel.views_count).desc())
-        .limit(limit)
-    )
-    rows = session.exec(statement).all()
-    items: list[ReelListItem] = []
+    """Home feed: most-viewed reels, capped per creator so one mega-account can't fill the grid."""
+    # Window function keeps the top N by views for each competitor, then we merge by views.
+    rows = session.execute(
+        text(
+            """
+            WITH ranked AS (
+                SELECT
+                    r.id AS id,
+                    r.views_count AS views_count,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY r.competitor_id
+                        ORDER BY r.views_count DESC, r.posted_at DESC NULLS LAST
+                    ) AS rn
+                FROM reels r
+                JOIN competitors c ON c.id = r.competitor_id
+                WHERE c.username <> :seed_username
+            )
+            SELECT id
+            FROM ranked
+            WHERE rn <= :per_creator
+            ORDER BY views_count DESC
+            LIMIT :limit
+            """
+        ),
+        {
+            "seed_username": SEED_USERNAME,
+            "per_creator": PER_CREATOR_HOME,
+            "limit": limit,
+        },
+    ).all()
+
+    ordered_ids = [row[0] for row in rows]
+    if not ordered_ids:
+        # Fallback for empty DB / only seed data.
+        statement = (
+            select(Reel, Competitor)
+            .where(Reel.competitor_id == Competitor.id)
+            .order_by(col(Reel.views_count).desc())
+            .limit(limit)
+        )
+        fallback = session.exec(statement).all()
+        items = [reel_to_list_item(reel, competitor.username) for reel, competitor in fallback]
+    else:
+        by_id: dict[UUID, ReelListItem] = {}
+        statement = (
+            select(Reel, Competitor)
+            .where(Reel.competitor_id == Competitor.id)
+            .where(col(Reel.id).in_(ordered_ids))
+        )
+        for reel, competitor in session.exec(statement).all():
+            by_id[reel.id] = reel_to_list_item(reel, competitor.username)
+        items = [by_id[reel_id] for reel_id in ordered_ids if reel_id in by_id]
+
     query = (q or "").strip().lower()
-    for reel, competitor in rows:
-        item = reel_to_list_item(reel, competitor.username)
-        if query and query not in item.title.lower() and query not in item.author.lower():
-            continue
-        items.append(item)
-    return items
+    if not query:
+        return items
+    return [
+        item
+        for item in items
+        if query in item.title.lower() or query in item.author.lower()
+    ]
 
 
 @router.get("/{reel_id}", response_model=ReelDetail)
