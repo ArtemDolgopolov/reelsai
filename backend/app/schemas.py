@@ -73,7 +73,7 @@ class CompetitorLoadRequest(BaseModel):
 class CompetitorLoadResponse(BaseModel):
     competitor: CompetitorRead
     reels: list[ReelListItem]
-    source: Literal["seed", "apify", "cache"]
+    source: Literal["seed", "apify", "apify_reuse", "cache"]
     message: str
 
 

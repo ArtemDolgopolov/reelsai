@@ -80,9 +80,12 @@ class ApifyClient:
         # The shape below matches what the backend already expects to normalize into SQLModel.
         headers = {"Authorization": f"Bearer {self.settings.apify_token}"}
         actor_id = self.settings.apify_actor_id.replace("/", "~")
+        # Actor sometimes returns tagged/collaborator reels mixed in. Fetch extra,
+        # then keep only items owned by the requested username.
+        fetch_limit = max(limit * 3, 40)
         payload = {
             "username": [username],
-            "resultsLimit": limit,
+            "resultsLimit": fetch_limit,
             "skipPinnedPosts": True,
             "includeTranscript": True,
             "includeDownloadedVideo": False,
@@ -126,9 +129,59 @@ class ApifyClient:
             items_response.raise_for_status()
             items: list[dict[str, Any]] = items_response.json()
 
-        items.sort(key=lambda item: item.get("timestamp") or "", reverse=True)
+        return self._build_payload(username=username, items=items, limit=limit, run_id=run_id)
+
+    async def fetch_competitor_from_run(
+        self, username: str, run_id: str, limit: int = 20
+    ) -> ApifyCompetitorPayload:
+        """Reuse an existing Apify run/dataset without spending new credits."""
+        if not self.configured:
+            raise ApifyNotConfiguredError(
+                "APIFY_TOKEN is not configured. Add the token to enable live Instagram parsing."
+            )
+
+        headers = {"Authorization": f"Bearer {self.settings.apify_token}"}
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
+            run_response = await client.get(
+                f"https://api.apify.com/v2/actor-runs/{run_id}",
+                headers=headers,
+            )
+            run_response.raise_for_status()
+            run = run_response.json().get("data", {})
+            if run.get("status") != "SUCCEEDED":
+                raise RuntimeError(f"Apify run {run_id} finished with status {run.get('status')}")
+            dataset_id = run.get("defaultDatasetId")
+            if not dataset_id:
+                raise RuntimeError(f"Apify run {run_id} returned no dataset")
+
+            items_response = await client.get(
+                f"https://api.apify.com/v2/datasets/{dataset_id}/items",
+                headers=headers,
+                params={"format": "json"},
+            )
+            items_response.raise_for_status()
+            items: list[dict[str, Any]] = items_response.json()
+
+        return self._build_payload(username=username, items=items, limit=limit, run_id=run_id)
+
+    def _build_payload(
+        self,
+        username: str,
+        items: list[dict[str, Any]],
+        limit: int,
+        run_id: str | None,
+    ) -> ApifyCompetitorPayload:
+        wanted = username.lstrip("@").lower()
+        owned = [
+            item
+            for item in items
+            if (item.get("ownerUsername") or wanted).lstrip("@").lower() == wanted
+        ]
+        owned.sort(key=lambda item: item.get("timestamp") or "", reverse=True)
+        selected = owned[:limit]
+
         reels: list[ApifyReelPayload] = []
-        for item in items[:limit]:
+        for item in selected:
             reels.append(
                 ApifyReelPayload(
                     external_id=str(item.get("id") or item.get("shortCode") or item.get("url")),
@@ -153,10 +206,9 @@ class ApifyClient:
                 )
             )
 
-        profile = items[0] if items else {}
-        owner = profile.get("ownerUsername") or username
+        profile = selected[0] if selected else (owned[0] if owned else {})
         return ApifyCompetitorPayload(
-            username=owner.lstrip("@"),
+            username=wanted,
             full_name=profile.get("ownerFullName"),
             bio=None,
             avatar_url=profile.get("ownerProfilePicUrl") or profile.get("displayUrl"),

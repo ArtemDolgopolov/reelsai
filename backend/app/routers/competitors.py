@@ -97,19 +97,35 @@ async def load_competitor(
             )
 
         try:
-            data = await client.fetch_competitor(username, limit=20)
+            # Prefer an already-paid Apify run stored on the competitor when force_refresh
+            # is not set and we somehow have a run_id without cached reels.
+            if (
+                existing_competitor is not None
+                and existing_competitor.apify_run_id
+                and not payload.force_refresh
+                and not get_latest_reels(session, existing_competitor.id)
+            ):
+                data = await client.fetch_competitor_from_run(
+                    username, existing_competitor.apify_run_id, limit=20
+                )
+                source = "apify_reuse"
+                message = "Импортировано из уже оплаченного Apify-run без новых кредитов"
+            else:
+                data = await client.fetch_competitor(username, limit=20)
+                source = "apify"
+                message = "Успешно загружено через Apify"
         except ApifyNotConfiguredError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Apify request failed: {exc}") from exc
 
         competitor = existing_competitor or session.exec(
-            select(Competitor).where(Competitor.username == data.username.lower())
+            select(Competitor).where(Competitor.username == username)
         ).first()
         if competitor is None:
-            competitor = Competitor(username=data.username.lower())
+            competitor = Competitor(username=username)
 
-        competitor.username = data.username.lower()
+        competitor.username = username
         competitor.full_name = data.full_name or competitor.full_name
         competitor.bio = data.bio or competitor.bio
         competitor.avatar_url = data.avatar_url or competitor.avatar_url
@@ -159,8 +175,8 @@ async def load_competitor(
         return CompetitorLoadResponse(
             competitor=competitor_to_read(competitor),
             reels=[reel_to_list_item(reel, competitor.username) for reel in reels],
-            source="apify",
-            message="Успешно загружено через Apify",
+            source=source,
+            message=message,
         )
 
     # Until APIFY_TOKEN is provided, keep the demo flow working with seeded data.
