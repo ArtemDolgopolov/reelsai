@@ -1103,6 +1103,136 @@ img {
   border-radius: 7px;
 }
 
+/* Slightly larger type scale for improved readability. */
+.brand {
+  font-size: 15px;
+}
+
+.nav-item {
+  font-size: 14px;
+}
+
+.nav-item.subtle,
+.plan-card strong {
+  font-size: 12px;
+}
+
+.plan-card small {
+  font-size: 10px;
+}
+
+.page-header p {
+  font-size: 15px;
+}
+
+.eyebrow {
+  font-size: 12px;
+}
+
+.search-field input,
+.competitor-loader input {
+  font-size: 14px;
+}
+
+.search-field kbd,
+.section-heading > span {
+  font-size: 10px;
+}
+
+.section-heading strong {
+  font-size: 14px;
+}
+
+.duration {
+  font-size: 10px;
+}
+
+.reel-meta {
+  font-size: 11px;
+}
+
+.reel-card h2 {
+  font-size: 14px;
+}
+
+.remix-button,
+.primary-button {
+  font-size: 13px;
+}
+
+.profile-main strong {
+  font-size: 15px;
+}
+
+.profile-main span,
+.profile-main p {
+  font-size: 11px;
+}
+
+.profile-stats strong,
+.results-heading h2 {
+  font-size: 16px;
+}
+
+.profile-stats small,
+.results-heading p,
+.success-badge {
+  font-size: 10px;
+}
+
+.compact-reel strong {
+  font-size: 11px;
+}
+
+.back-button {
+  font-size: 13px;
+}
+
+.creator-row > span:nth-child(2) strong {
+  font-size: 13px;
+}
+
+.creator-row > span:nth-child(2) small {
+  font-size: 10px;
+}
+
+.creator-meta,
+.instagram-button {
+  font-size: 11px;
+}
+
+.detail-tabs button {
+  font-size: 12px;
+}
+
+.insight-title strong {
+  font-size: 13px;
+}
+
+.insight-title small,
+.insight-title button {
+  font-size: 10px;
+}
+
+.insight-card blockquote,
+.insight-card p,
+.insight-card ol {
+  font-size: 12px;
+}
+
+.counter {
+  font-size: 9px;
+}
+
+.pro-tip,
+.transcript-badge {
+  font-size: 11px;
+}
+
+.transcript-panel p {
+  font-size: 14px;
+}
+
 @media (min-width: 1250px) {
   .home-page .reels-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
