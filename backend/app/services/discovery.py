@@ -47,6 +47,7 @@ def _upsert_discovery_competitor(session: Session, item: FreeReelPayload) -> Com
 def persist_discovery_reels(session: Session, payloads: list[FreeReelPayload]) -> list[UUID]:
     """Save discovered reels and return their IDs in payload order."""
     from app.routers.competitors import apply_reel_payload
+    from app.services.stt_jobs import schedule_transcripts
 
     ordered_ids: list[UUID] = []
     for item in payloads:
@@ -57,6 +58,8 @@ def persist_discovery_reels(session: Session, payloads: list[FreeReelPayload]) -
         session.flush()
         ordered_ids.append(reel.id)
     session.commit()
+    # Kick off spoken-audio STT immediately for the home grid.
+    schedule_transcripts(ordered_ids)
     return ordered_ids
 
 

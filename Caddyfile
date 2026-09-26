@@ -4,8 +4,8 @@
 	handle /api/* {
 		reverse_proxy api:8000 {
 			transport http {
-				read_timeout 60s
-				write_timeout 60s
+				read_timeout 120s
+				write_timeout 120s
 			}
 		}
 	}

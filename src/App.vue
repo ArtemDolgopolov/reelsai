@@ -517,7 +517,9 @@ onBeforeUnmount(() => {
 
         <div v-if="detailLoading || !selectedReel" class="empty-state">
           <Sparkles :size="30" />
-          <strong>{{ detailLoading ? 'Открываем рилс...' : 'Рилс не выбран' }}</strong>
+          <strong>{{ detailLoading ? 'Распознаём речь ролика…' : 'Рилс не выбран' }}</strong>
+          <p v-if="detailLoading">Скачиваем аудио и делаем расшифровку — обычно 10–40 секунд.</p>
+          <p v-else-if="saveError">{{ saveError }}</p>
         </div>
 
         <div v-else class="detail-layout">

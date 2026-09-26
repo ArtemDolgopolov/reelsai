@@ -439,8 +439,14 @@ def _download_audio(url: str, workdir: Path) -> Path | None:
 
 def _download_audio_from_direct(url: str, workdir: Path) -> Path | None:
     target = workdir / "direct.mp4"
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "*/*",
+        "Referer": "https://www.instagram.com/",
+        "Origin": "https://www.instagram.com",
+    }
     try:
-        with httpx.Client(follow_redirects=True, timeout=60.0, headers={"User-Agent": USER_AGENT}) as client:
+        with httpx.Client(follow_redirects=True, timeout=60.0, headers=headers) as client:
             with client.stream("GET", url) as response:
                 response.raise_for_status()
                 with target.open("wb") as handle:
@@ -448,6 +454,10 @@ def _download_audio_from_direct(url: str, workdir: Path) -> Path | None:
                         handle.write(chunk)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Direct media download failed: %s", exc)
+        return None
+
+    if not target.exists() or target.stat().st_size < 1000:
+        logger.warning("Direct media download too small/empty")
         return None
 
     wav = workdir / "audio.wav"
@@ -524,9 +534,10 @@ def enrich_reel_from_url(
         with tempfile.TemporaryDirectory(prefix="reelsai-audio-") as tmp:
             workdir = Path(tmp)
             audio_path = None
+            # Prefer CDN video URL — Instagram page downloads via yt-dlp often 429.
             if video_url:
                 audio_path = _download_audio_from_direct(video_url, workdir)
-            if audio_path is None:
+            if audio_path is None and webpage and "instagram.com" in webpage:
                 audio_path = _download_audio(webpage, workdir)
             if audio_path is not None:
                 spoken = transcribe_audio_file(

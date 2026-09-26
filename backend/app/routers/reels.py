@@ -8,7 +8,9 @@ from app.db import get_session
 from app.models import Competitor, Reel
 from app.schemas import ReelDetail, ReelListItem, ReelUpdateRequest
 from app.services.discovery import fetch_home_discover_reels
+from app.services.instagram_free import looks_like_real_transcript
 from app.services.serializers import reel_to_detail
+from app.services.stt_jobs import ensure_reel_transcript
 
 router = APIRouter(prefix="/reels", tags=["reels"])
 
@@ -59,6 +61,12 @@ def get_reel(reel_id: UUID, session: Session = Depends(get_session)) -> ReelDeta
     competitor = session.get(Competitor, reel.competitor_id)
     if competitor is None:
         raise HTTPException(status_code=404, detail="Competitor not found")
+
+    # On open: finish speech recognition before returning Hook/Script/CTA.
+    if not looks_like_real_transcript(reel.transcript):
+        reel = ensure_reel_transcript(session, reel, competitor)
+        session.refresh(reel)
+
     return reel_to_detail(reel, competitor)
 
 
