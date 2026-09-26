@@ -395,12 +395,27 @@ img {
   right: 12px;
   bottom: 33px;
   left: 12px;
+  display: -webkit-box;
+  overflow: hidden;
   color: white;
-  font-size: clamp(18px, 2vw, 27px);
-  font-weight: 950;
-  line-height: 0.9;
-  letter-spacing: -0.055em;
+  font-size: clamp(15px, 1.6vw, 22px);
+  font-weight: 850;
+  line-height: 1.15;
+  letter-spacing: -0.04em;
   text-shadow: 0 2px 14px rgb(0 0 0 / 42%);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.poster.thumb-missing,
+.compact-poster.thumb-missing,
+.featured-video.thumb-missing {
+  background: linear-gradient(160deg, #2a2433 0%, #15121b 55%, #0d0b12 100%);
+}
+
+.poster.thumb-missing .poster-shade,
+.featured-video.thumb-missing .poster-shade {
+  background: linear-gradient(180deg, transparent 35%, rgb(11 9 16 / 78%) 100%);
 }
 
 .duration {

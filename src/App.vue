@@ -76,17 +76,37 @@ const selectedViewsLabel = computed(() => formatViews(selectedReel.value?.views_
 function formatViews(count) {
   if (count >= 1_000_000) {
     const value = count / 1_000_000
-    return `${String(value).replace(/\.0$/, '')}M`
+    return `${value >= 10 ? value.toFixed(0) : value.toFixed(1).replace(/\.0$/, '')}M`
   }
   if (count >= 1_000) {
     const value = count / 1_000
-    return `${String(value).replace(/\.0$/, '')}K`
+    return `${value >= 10 ? value.toFixed(0) : value.toFixed(1).replace(/\.0$/, '')}K`
   }
   return String(count)
 }
 
 function formatFollowers(count) {
   return formatViews(count)
+}
+
+function thumbSrc(url) {
+  if (!url) return ''
+  if (url.startsWith('/api/media/proxy')) return url
+  return `/api/media/proxy?url=${encodeURIComponent(url)}`
+}
+
+function posterLine(reel) {
+  const raw = (reel?.overlay_text || reel?.title || '').replace(/\s+/g, ' ').trim()
+  if (!raw) return ''
+  return raw.length > 52 ? `${raw.slice(0, 51)}…` : raw
+}
+
+function onThumbError(event) {
+  const img = event?.target
+  if (!img) return
+  img.style.display = 'none'
+  const poster = img.closest('.poster, .compact-poster, .featured-video')
+  if (poster) poster.classList.add('thumb-missing')
 }
 
 function navigate(page) {
@@ -344,9 +364,16 @@ onBeforeUnmount(() => {
         <div v-if="filteredReels.length" class="reels-grid">
           <article v-for="reel in filteredReels" :key="reel.id" class="reel-card">
             <button class="poster" type="button" @click="openReel(reel.id)">
-              <img :src="reel.thumbnail_url" :alt="reel.title" />
+              <img
+                v-if="reel.thumbnail_url"
+                :src="thumbSrc(reel.thumbnail_url)"
+                :alt="reel.title"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+                @error="onThumbError"
+              />
               <span class="poster-shade"></span>
-              <span class="poster-hook">{{ reel.overlay_text || reel.title }}</span>
+              <span class="poster-hook">{{ posterLine(reel) }}</span>
               <span class="duration"><Play :size="10" fill="currentColor" /> {{ reel.duration }}</span>
             </button>
             <div class="reel-meta">
@@ -444,7 +471,14 @@ onBeforeUnmount(() => {
               class="compact-reel"
             >
               <button class="compact-poster" type="button" @click="openReel(reel.id)">
-                <img :src="reel.thumbnail_url" :alt="reel.title" />
+                <img
+                  v-if="reel.thumbnail_url"
+                  :src="thumbSrc(reel.thumbnail_url)"
+                  :alt="reel.title"
+                  loading="lazy"
+                  referrerpolicy="no-referrer"
+                  @error="onThumbError"
+                />
                 <span class="duration"><Play :size="9" fill="currentColor" /> {{ reel.duration }}</span>
               </button>
               <button class="compact-title" type="button" @click="openReel(reel.id)">
@@ -483,9 +517,15 @@ onBeforeUnmount(() => {
         <div v-else class="detail-layout">
           <div class="video-column">
             <div class="featured-video">
-              <img :src="selectedReel.thumbnail_url" :alt="selectedReel.title" />
+              <img
+                v-if="selectedReel.thumbnail_url"
+                :src="thumbSrc(selectedReel.thumbnail_url)"
+                :alt="selectedReel.title"
+                referrerpolicy="no-referrer"
+                @error="onThumbError"
+              />
               <span class="poster-shade"></span>
-              <span class="poster-hook">{{ selectedReel.overlay_text || selectedReel.title }}</span>
+              <span class="poster-hook">{{ posterLine(selectedReel) }}</span>
               <button type="button" aria-label="Воспроизвести видео">
                 <Play :size="24" fill="currentColor" />
               </button>

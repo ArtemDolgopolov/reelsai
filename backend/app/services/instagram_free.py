@@ -287,10 +287,22 @@ def _payload_from_node(node: dict[str, Any]) -> FreeReelPayload | None:
     )
     taken = node.get("taken_at_timestamp") or node.get("taken_at") or node.get("device_timestamp")
     image = node.get("display_url") or node.get("thumbnail_src") or node.get("display_uri")
+    candidates = (node.get("image_versions2") or {}).get("candidates") or []
+    if candidates:
+        # Prefer a mid/large still (~640px+) over the tiniest candidate.
+        ranked = sorted(
+            (c for c in candidates if c.get("url")),
+            key=lambda c: abs(int(c.get("width") or 0) - 640),
+        )
+        if ranked:
+            image = ranked[0].get("url") or image
     if not image:
-        candidates = (node.get("image_versions2") or {}).get("candidates") or []
-        if candidates:
-            image = candidates[0].get("url")
+        resources = node.get("carousel_media") or []
+        for resource in resources:
+            nested = (resource.get("image_versions2") or {}).get("candidates") or []
+            if nested and nested[0].get("url"):
+                image = nested[0]["url"]
+                break
 
     return FreeReelPayload(
         external_id=shortcode,
