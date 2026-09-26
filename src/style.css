@@ -485,6 +485,109 @@ img {
   gap: 3px;
 }
 
+.stats-pills,
+.detail-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.detail-stats {
+  margin-top: 14px;
+  margin-bottom: 0;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 750;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.stat-pill.views {
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.stat-pill.likes {
+  color: #be123c;
+  background: #fff1f2;
+  border-color: #fecdd3;
+}
+
+.stat-pill.comments {
+  color: #0f766e;
+  background: #f0fdfa;
+  border-color: #99f6e4;
+}
+
+.stat-pill.duration {
+  color: #6d28d9;
+  background: #f5f3ff;
+  border-color: #ddd6fe;
+}
+
+.stat-pill strong {
+  font-size: 12px;
+}
+
+.open-original-link {
+  display: inline-grid;
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  color: #6d28d9;
+  place-items: center;
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  border-radius: 8px;
+  text-decoration: none;
+}
+
+.open-original-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 4px 8px;
+  color: #6d28d9;
+  font-size: 9px;
+  font-weight: 700;
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  border-radius: 999px;
+  text-decoration: none;
+}
+
+.compact-stats {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  color: #6b6475;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.compact-title {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
 .remix-button,
 .primary-button {
   display: inline-flex;
@@ -697,18 +800,20 @@ img {
   text-align: left;
   background: transparent;
   border: 0;
-  cursor: pointer;
 }
 
 .compact-poster {
   position: relative;
   display: block;
   width: 100%;
+  padding: 0;
   aspect-ratio: 0.82;
   overflow: hidden;
   background: #e9e4ef;
+  border: 0;
   border-radius: 10px;
   box-shadow: 0 6px 18px rgb(39 24 60 / 9%);
+  cursor: pointer;
 }
 
 .compact-reel strong {
@@ -857,8 +962,6 @@ img {
   align-items: center;
   gap: 10px;
   margin-top: 20px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--line);
 }
 
 .creator-avatar {
@@ -874,19 +977,23 @@ img {
   border-radius: 50%;
 }
 
-.creator-row > span:nth-child(2) strong,
-.creator-row > span:nth-child(2) small {
+.creator-source {
+  min-width: 0;
+}
+
+.creator-source strong,
+.creator-source small {
   display: block;
 }
 
-.creator-row > span:nth-child(2) strong {
-  font-size: 11px;
+.creator-source strong {
+  font-size: 12px;
 }
 
-.creator-row > span:nth-child(2) small {
+.creator-source small {
   margin-top: 2px;
   color: #8e8797;
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .creator-meta {
@@ -898,17 +1005,29 @@ img {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: 31px;
+  min-height: 34px;
   margin-left: auto;
-  padding: 0 10px;
+  padding: 0 12px;
   color: #595261;
-  font-size: 9px;
-  font-weight: 650;
+  font-size: 11px;
+  font-weight: 700;
   background: white;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 9px;
   cursor: pointer;
   text-decoration: none;
+}
+
+.instagram-button.primary-original {
+  color: white;
+  background: linear-gradient(135deg, #ef4444, #f97316);
+  border: 0;
+  box-shadow: 0 8px 18px rgb(239 68 68 / 22%);
+}
+
+.instagram-button.inline-original {
+  margin-top: 14px;
+  margin-left: 0;
 }
 
 .detail-tabs {
@@ -1195,6 +1314,8 @@ img {
 }
 
 .transcript-panel {
+  display: grid;
+  gap: 14px;
   margin-top: 17px;
   padding: 22px;
   background: white;
@@ -1203,22 +1324,33 @@ img {
   box-shadow: var(--shadow);
 }
 
+.transcript-block {
+  display: grid;
+  gap: 10px;
+}
+
 .transcript-panel p {
   color: #5e5766;
-  font-size: 12px;
-  line-height: 1.8;
+  font-size: 13px;
+  line-height: 1.75;
 }
 
 .transcript-badge {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  width: fit-content;
   padding: 6px 9px;
   color: var(--purple);
   font-size: 9px;
   font-weight: 700;
   background: var(--purple-soft);
   border-radius: 7px;
+}
+
+.transcript-badge.muted {
+  color: #6b6475;
+  background: #f3f1f6;
 }
 
 /* Slightly larger type scale for improved readability. */
@@ -1306,11 +1438,11 @@ img {
   font-size: 13px;
 }
 
-.creator-row > span:nth-child(2) strong {
+.creator-source strong {
   font-size: 13px;
 }
 
-.creator-row > span:nth-child(2) small {
+.creator-source small {
   font-size: 10px;
 }
 

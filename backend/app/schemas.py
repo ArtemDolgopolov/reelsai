@@ -30,10 +30,12 @@ class ReelListItem(BaseModel):
     author: str
     duration: str
     thumbnail_url: Optional[str] = None
+    instagram_url: Optional[str] = None
     overlay_text: Optional[str] = None
     views_count: int
     likes_count: int
     comments_count: int
+    has_transcript: bool = False
     status: ReelStatus
 
 
@@ -73,7 +75,7 @@ class CompetitorLoadRequest(BaseModel):
 class CompetitorLoadResponse(BaseModel):
     competitor: CompetitorRead
     reels: list[ReelListItem]
-    source: Literal["seed", "apify", "apify_reuse", "cache"]
+    source: Literal["seed", "free", "cache"]
     message: str
 
 
@@ -85,4 +87,4 @@ class ReelUpdateRequest(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     database: str
-    apify_configured: bool
+    ingest: str

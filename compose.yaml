@@ -26,8 +26,6 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://reelsai:${POSTGRES_PASSWORD:-reelsai}@db:5432/reelsai
       EDITOR_IP: ${EDITOR_IP:-185.113.39.206}
-      APIFY_TOKEN: ${APIFY_TOKEN:-}
-      APIFY_ACTOR_ID: ${APIFY_ACTOR_ID:-apify/instagram-reel-scraper}
       SEED_ON_STARTUP: ${SEED_ON_STARTUP:-true}
 
   web:

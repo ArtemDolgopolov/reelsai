@@ -24,6 +24,7 @@ def competitor_to_read(competitor: Competitor) -> CompetitorRead:
 
 
 def reel_to_list_item(reel: Reel, username: str) -> ReelListItem:
+    transcript = (reel.transcript or "").strip()
     return ReelListItem(
         id=reel.id,
         competitor_id=reel.competitor_id,
@@ -31,10 +32,12 @@ def reel_to_list_item(reel: Reel, username: str) -> ReelListItem:
         author=f"@{username}",
         duration=format_duration(reel.duration_seconds),
         thumbnail_url=reel.thumbnail_url,
+        instagram_url=reel.instagram_url,
         overlay_text=reel.overlay_text,
         views_count=reel.views_count,
         likes_count=reel.likes_count,
         comments_count=reel.comments_count,
+        has_transcript=len(transcript) >= 40,
         status=reel.status,
     )
 

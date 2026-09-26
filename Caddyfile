@@ -2,7 +2,12 @@
 	encode zstd gzip
 
 	handle /api/* {
-		reverse_proxy api:8000
+		reverse_proxy api:8000 {
+			transport http {
+				read_timeout 15m
+				write_timeout 15m
+			}
+		}
 	}
 
 	handle {

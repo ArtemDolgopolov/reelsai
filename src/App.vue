@@ -8,6 +8,7 @@ import {
   Check,
   ChevronRight,
   CircleHelp,
+  ExternalLink,
   Eye,
   FileText,
   Heart,
@@ -332,15 +333,26 @@ onBeforeUnmount(() => {
             <div class="reel-meta">
               <span class="mini-avatar">{{ reel.author.slice(1, 2).toUpperCase() }}</span>
               <span>{{ reel.author }}</span>
+              <a
+                v-if="reel.instagram_url"
+                class="open-original-link"
+                :href="reel.instagram_url"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Открыть оригинальный Reels"
+                @click.stop
+              >
+                <ExternalLink :size="14" />
+              </a>
               <button type="button" aria-label="Дополнительные действия">
                 <MoreVertical :size="16" />
               </button>
             </div>
             <h2>{{ reel.title }}</h2>
-            <div class="engagement-row">
-              <span><Eye :size="13" /> {{ formatViews(reel.views_count) }}</span>
-              <span><Heart :size="13" /> {{ formatViews(reel.likes_count) }}</span>
-              <span><MessageCircle :size="13" /> {{ formatViews(reel.comments_count) }}</span>
+            <div class="stats-pills">
+              <span class="stat-pill views"><Eye :size="14" /> {{ formatViews(reel.views_count) }}</span>
+              <span class="stat-pill likes"><Heart :size="14" /> {{ formatViews(reel.likes_count) }}</span>
+              <span class="stat-pill comments"><MessageCircle :size="14" /> {{ formatViews(reel.comments_count) }}</span>
             </div>
             <button class="remix-button" type="button" @click="openReel(reel.id)">
               <WandSparkles :size="15" />
@@ -376,7 +388,7 @@ onBeforeUnmount(() => {
             :disabled="competitorLoading"
             @click="loadCompetitor(false)"
           >
-            {{ competitorLoading ? 'Загружаем...' : 'Загрузить' }}
+            {{ competitorLoading ? 'Расшифровываем...' : 'Загрузить' }}
             <ArrowUpRight :size="17" />
           </button>
         </div>
@@ -407,19 +419,33 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="compact-reels-grid">
-            <button
+            <article
               v-for="reel in competitorReels"
               :key="reel.id"
               class="compact-reel"
-              type="button"
-              @click="openReel(reel.id)"
             >
-              <span class="compact-poster">
+              <button class="compact-poster" type="button" @click="openReel(reel.id)">
                 <img :src="reel.thumbnail_url" :alt="reel.title" />
                 <span class="duration"><Play :size="9" fill="currentColor" /> {{ reel.duration }}</span>
-              </span>
-              <strong>{{ reel.title }}</strong>
-            </button>
+              </button>
+              <button class="compact-title" type="button" @click="openReel(reel.id)">
+                <strong>{{ reel.title }}</strong>
+              </button>
+              <div class="compact-stats">
+                <span>{{ formatViews(reel.views_count) }} views</span>
+                <span>{{ formatViews(reel.likes_count) }} likes</span>
+              </div>
+              <a
+                v-if="reel.instagram_url"
+                class="open-original-chip"
+                :href="reel.instagram_url"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <ExternalLink :size="12" />
+                Оригинал
+              </a>
+            </article>
           </div>
         </template>
       </section>
@@ -471,26 +497,28 @@ onBeforeUnmount(() => {
 
             <div class="creator-row">
               <span class="creator-avatar">{{ (selectedReel.author_name || selectedReel.author || 'A').slice(0, 1).toUpperCase() }}</span>
-              <span>
+              <span class="creator-source">
                 <strong>{{ selectedReel.author_name || selectedReel.author }}</strong>
-                <small>{{ selectedReel.author }}</small>
-              </span>
-              <span class="creator-meta">
-                {{ selectedDurationLabel }} · {{ selectedViewsLabel }} просмотров ·
-                {{ formatViews(selectedReel.likes_count) }} лайков ·
-                {{ formatViews(selectedReel.comments_count) }} комментариев
+                <small>Источник · {{ selectedReel.author }}</small>
               </span>
               <a
                 v-if="selectedReel.instagram_url"
-                class="instagram-button"
+                class="instagram-button primary-original"
                 :href="selectedReel.instagram_url"
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                <Camera :size="15" />
-                Открыть в Instagram
+                <ExternalLink :size="15" />
+                Открыть оригинал
                 <ArrowUpRight :size="14" />
               </a>
+            </div>
+
+            <div class="detail-stats">
+              <span class="stat-pill views"><Eye :size="15" /> <strong>{{ selectedViewsLabel }}</strong> просмотров</span>
+              <span class="stat-pill likes"><Heart :size="15" /> <strong>{{ formatViews(selectedReel.likes_count) }}</strong> лайков</span>
+              <span class="stat-pill comments"><MessageCircle :size="15" /> <strong>{{ formatViews(selectedReel.comments_count) }}</strong> комм.</span>
+              <span class="stat-pill duration"><Play :size="15" /> <strong>{{ selectedDurationLabel }}</strong></span>
             </div>
 
             <div class="detail-tabs" role="tablist">
@@ -665,8 +693,30 @@ onBeforeUnmount(() => {
             </div>
 
             <div v-else class="transcript-panel">
-              <span class="transcript-badge"><Bolt :size="14" /> Автоматическая расшифровка</span>
-              <p class="preserve-lines">{{ selectedReel.transcript || selectedReel.caption || 'Расшифровка пока недоступна.' }}</p>
+              <div class="transcript-block">
+                <span class="transcript-badge"><Bolt :size="14" /> Что говорит автор (аудио)</span>
+                <p class="preserve-lines">
+                  {{
+                    selectedReel.transcript && selectedReel.transcript.length >= 40
+                      ? selectedReel.transcript
+                      : 'Расшифровка речи пока недоступна. Нажмите «Загрузить» у конкурента ещё раз — Whisper достанет текст из аудио рилса.'
+                  }}
+                </p>
+              </div>
+              <div v-if="selectedReel.caption" class="transcript-block caption-block">
+                <span class="transcript-badge muted">Подпись Instagram</span>
+                <p class="preserve-lines">{{ selectedReel.caption }}</p>
+              </div>
+              <a
+                v-if="selectedReel.instagram_url"
+                class="instagram-button primary-original inline-original"
+                :href="selectedReel.instagram_url"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <ExternalLink :size="15" />
+                Открыть оригинальный Reels
+              </a>
             </div>
           </div>
         </div>
