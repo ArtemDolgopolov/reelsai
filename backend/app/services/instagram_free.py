@@ -153,6 +153,54 @@ def _download_audio(url: str, workdir: Path) -> Path | None:
     return candidates[0] if candidates else None
 
 
+def _normalize_reel_url(url: str) -> str:
+    match = re.search(r"instagram\.com/(?:reel|p|tv)/([^/?#]+)", url)
+    if match:
+        return f"https://www.instagram.com/reel/{match.group(1)}/"
+    return url
+
+
+def _download_audio_from_direct(url: str, workdir: Path) -> Path | None:
+    """Fallback when yt-dlp is rate-limited but we still have a CDN media URL."""
+    target = workdir / "direct.mp4"
+    try:
+        with httpx.Client(follow_redirects=True, timeout=120.0, headers={"User-Agent": USER_AGENT}) as client:
+            with client.stream("GET", url) as response:
+                response.raise_for_status()
+                with target.open("wb") as handle:
+                    for chunk in response.iter_bytes():
+                        handle.write(chunk)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Direct media download failed: %s", exc)
+        return None
+
+    wav = workdir / "audio.wav"
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(target),
+            "-vn",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            str(wav),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if result.returncode != 0 or not wav.exists():
+        logger.warning("ffmpeg extract failed: %s", (result.stderr or "")[:300])
+        return None
+    return wav
+
+
 def enrich_reel_from_url(
     url: str,
     *,
@@ -160,10 +208,18 @@ def enrich_reel_from_url(
     existing: FreeReelPayload | None = None,
 ) -> FreeReelPayload:
     """Fetch metadata (and optional speech transcript) for a single reel URL."""
-    info = _ytdlp_json(url)
-    shortcode = str(info.get("id") or info.get("display_id") or "")
-    caption = info.get("description")
-    title = (caption or info.get("title") or "Instagram Reel").strip()[:300]
+    webpage = _normalize_reel_url(url)
+    info: dict[str, Any] = {}
+    try:
+        info = _ytdlp_json(webpage)
+    except InstagramFreeError as exc:
+        logger.warning("yt-dlp metadata failed for %s: %s", webpage, exc)
+        if existing is None:
+            raise
+
+    shortcode = str(info.get("id") or info.get("display_id") or (existing.external_id if existing else "") or "")
+    caption = info.get("description") or (existing.caption if existing else None)
+    title = (caption or info.get("title") or (existing.title if existing else None) or "Instagram Reel").strip()[:300]
     duration = int(info.get("duration") or (existing.duration_seconds if existing else 0) or 0)
     views = int(
         info.get("view_count")
@@ -174,20 +230,21 @@ def enrich_reel_from_url(
     likes = int(info.get("like_count") or (existing.likes_count if existing else 0) or 0)
     comments = int(info.get("comment_count") or (existing.comments_count if existing else 0) or 0)
     thumbnail = info.get("thumbnail") or (existing.thumbnail_url if existing else None)
-    webpage = info.get("webpage_url") or url
+    webpage = info.get("webpage_url") or webpage
     posted_at = _parse_timestamp(info.get("timestamp")) or (existing.posted_at if existing else None)
+    video_url = existing.video_url if existing else None
 
     transcript = existing.transcript if existing else None
-    if transcribe:
+    if transcribe and not looks_like_real_transcript(transcript):
         with tempfile.TemporaryDirectory(prefix="reelsai-audio-") as tmp:
-            audio_path = _download_audio(webpage, Path(tmp))
+            workdir = Path(tmp)
+            audio_path = _download_audio(webpage, workdir)
+            if audio_path is None and video_url:
+                audio_path = _download_audio_from_direct(video_url, workdir)
             if audio_path is not None:
                 spoken = transcribe_audio_file(audio_path)
                 if spoken:
                     transcript = spoken
-                # Prefer duration from the downloaded media when metadata lacked it.
-                if not duration and info.get("duration"):
-                    duration = int(info["duration"])
 
     return FreeReelPayload(
         external_id=shortcode or (existing.external_id if existing else webpage),

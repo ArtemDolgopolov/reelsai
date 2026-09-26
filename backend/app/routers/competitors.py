@@ -63,11 +63,10 @@ def apply_reel_payload(session: Session, competitor: Competitor, item: FreeReelP
 
     spoken = (item.transcript or "").strip()
     caption = (item.caption or item.title or "").strip()
-    if spoken:
-        if not reel.hook or not looks_like_real_transcript(reel.hook):
-            reel.hook = spoken[:200]
-        if not reel.script or not looks_like_real_transcript(reel.script):
-            reel.script = spoken
+    if spoken and looks_like_real_transcript(spoken):
+        # Spoken audio is the remix source of truth.
+        reel.hook = spoken[:200]
+        reel.script = spoken
     else:
         if not reel.hook:
             reel.hook = caption[:200]
