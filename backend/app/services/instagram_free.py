@@ -130,9 +130,19 @@ def looks_like_real_transcript(text: str | None) -> bool:
     if not text:
         return False
     cleaned = re.sub(r"\s+", " ", text).strip()
-    if len(cleaned) < 40:
+    if len(cleaned) < 25:
         return False
-    if cleaned.count(" ") < 4 and len(cleaned) < 80:
+    words = cleaned.split()
+    if len(words) < 4:
+        return False
+    low = cleaned.lower()
+    garbage = (
+        "hello google",
+        "english conversation",
+        "thank you for watching",
+        "thanks for watching",
+    )
+    if any(item in low for item in garbage) and len(cleaned) < 90:
         return False
     return True
 
