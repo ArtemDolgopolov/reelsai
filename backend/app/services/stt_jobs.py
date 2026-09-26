@@ -76,8 +76,24 @@ def ensure_reel_transcript(session: Session, reel: Reel, competitor: Competitor 
         # Another worker is already transcribing this reel — wait for it.
         logger.info("Waiting for in-flight STT for %s", reel.external_id or key)
         event.wait(timeout=100)
+        session.expire(reel)
         session.refresh(reel)
-        return reel
+        if looks_like_real_transcript(reel.transcript):
+            return reel
+        # Previous worker failed — take ownership and try again.
+        with _lock:
+            event = _events.get(key)
+            if event is None:
+                event = threading.Event()
+                _events[key] = event
+                owner = True
+            else:
+                owner = False
+        if not owner:
+            event.wait(timeout=100)
+            session.expire(reel)
+            session.refresh(reel)
+            return reel
 
     try:
         from app.routers.competitors import apply_reel_payload
