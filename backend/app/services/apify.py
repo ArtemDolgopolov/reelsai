@@ -61,7 +61,7 @@ class ApifyClient:
         # Placeholder for the next integration step with a real Apify actor run.
         # The shape below matches what the backend already expects to normalize into SQLModel.
         headers = {"Authorization": f"Bearer {self.settings.apify_token}"}
-        actor_id = self.settings.apify_actor_id
+        actor_id = self.settings.apify_actor_id.replace("/", "~")
         payload = {
             "username": [username],
             "resultsLimit": limit,
