@@ -458,7 +458,10 @@ def enrich_reel_from_url(
             if audio_path is None:
                 audio_path = _download_audio(webpage, workdir)
             if audio_path is not None:
-                spoken = transcribe_audio_file(audio_path)
+                spoken = transcribe_audio_file(
+                    audio_path,
+                    hint_text=caption or title,
+                )
                 if spoken:
                     transcript = spoken
 

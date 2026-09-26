@@ -434,6 +434,15 @@ onBeforeUnmount(() => {
             {{ competitorLoading ? 'Загружаем…' : 'Загрузить' }}
             <ArrowUpRight :size="17" />
           </button>
+          <button
+            class="ghost-button"
+            type="button"
+            :disabled="competitorLoading || !competitorHandle.trim()"
+            @click="loadCompetitor(true)"
+            title="Заново распознать речь с автоопределением языка"
+          >
+            Обновить речь
+          </button>
         </div>
 
         <template v-if="competitor">

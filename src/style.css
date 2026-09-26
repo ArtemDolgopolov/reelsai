@@ -688,7 +688,7 @@ img {
 
 .competitor-loader {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 12px;
   margin-bottom: 18px;
   padding: 14px;
@@ -1286,6 +1286,26 @@ img {
   color: #635c6b;
   background: white;
   border: 1px solid #ddd7e5;
+}
+
+.ghost-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  padding: 0 14px;
+  color: #4b4456;
+  font-size: 12px;
+  font-weight: 700;
+  background: white;
+  border: 1px solid #ddd7e5;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.ghost-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .save-button {

@@ -26,20 +26,19 @@ def competitor_to_read(competitor: Competitor) -> CompetitorRead:
 
 
 def analysis_sections(reel: Reel) -> tuple[str, str, str]:
-    """Prefer a structured split of spoken audio for Hook / Script / CTA."""
+    """Hook / Script / CTA from spoken audio only — never Instagram captions."""
     spoken = (reel.transcript or "").strip()
-    caption = (reel.caption or reel.title or "").strip()
     if looks_like_real_transcript(spoken):
         stored_script = (reel.script or "").strip()
         # Re-split legacy rows where the whole transcript was dumped into script.
         if not stored_script or stored_script == spoken:
-            return split_transcript_into_sections(spoken, caption)
-    hook = (reel.hook or "").strip()
-    script = (reel.script or "").strip()
-    cta = (reel.cta or "").strip()
-    if not hook and not script:
-        return split_transcript_into_sections(spoken or None, caption)
-    return hook, script, cta
+            return split_transcript_into_sections(spoken)
+        return (
+            (reel.hook or "").strip(),
+            stored_script,
+            (reel.cta or "").strip() or split_transcript_into_sections(spoken)[2],
+        )
+    return "", "", (reel.cta or "").strip()
 
 
 def reel_to_list_item(reel: Reel, username: str) -> ReelListItem:

@@ -66,25 +66,25 @@ def apply_reel_payload(session: Session, competitor: Competitor, item: FreeReelP
     reel.status = ReelStatus.ready
 
     spoken = (item.transcript or reel.transcript or "").strip()
-    caption = (item.caption or item.title or "").strip()
     if spoken and looks_like_real_transcript(spoken):
-        hook, script, cta = split_transcript_into_sections(spoken, caption)
+        hook, script, cta = split_transcript_into_sections(spoken)
         reel.hook = hook
         reel.script = script
         reel.cta = cta
-    else:
-        hook, script, cta = split_transcript_into_sections(None, caption)
+    elif not looks_like_real_transcript(reel.transcript):
+        # Do not invent Hook/Script from Instagram captions/subtitles —
+        # analysis must come from spoken audio once STT finishes.
         if not reel.hook:
-            reel.hook = hook
+            reel.hook = ""
         if not reel.script:
-            reel.script = script
+            reel.script = ""
         if not reel.cta:
-            reel.cta = cta or DEFAULT_CTA
+            reel.cta = DEFAULT_CTA
     session.add(reel)
     return reel
 
 
-def _background_transcribe(competitor_id: UUID) -> None:
+def _background_transcribe(competitor_id: UUID, force: bool = False) -> None:
     """Fill missing spoken transcripts without blocking the load API."""
     client = InstagramFreeClient()
     with Session(engine) as session:
@@ -100,6 +100,14 @@ def _background_transcribe(competitor_id: UUID) -> None:
                 .limit(20)
             ).all()
         )
+        if force:
+            for reel in reels:
+                reel.transcript = None
+                reel.hook = ""
+                reel.script = ""
+                session.add(reel)
+            session.commit()
+
         missing = [
             reel
             for reel in reels
@@ -153,7 +161,6 @@ def _background_transcribe(competitor_id: UUID) -> None:
             competitor.last_error = f"Transcript background job: {exc}"
             session.add(competitor)
             session.commit()
-
 
 def backfill_missing_transcripts() -> None:
     """Refresh CDN media URLs, then STT across every competitor with missing speech."""
@@ -281,12 +288,16 @@ async def load_competitor(
         apply_reel_payload(session, competitor, item)
     session.commit()
 
-    background_tasks.add_task(_background_transcribe, competitor.id)
+    background_tasks.add_task(_background_transcribe, competitor.id, payload.force_refresh)
 
     reels = get_latest_reels(session, competitor.id)
     return CompetitorLoadResponse(
         competitor=competitor_to_read(competitor),
         reels=[reel_to_list_item(reel, competitor.username) for reel in reels],
         source="free",
-        message="Рилсы загружены. Текст речи догружается в фоне — обновите карточку через минуту.",
+        message=(
+            "Рилсы загружены. Речь распознаётся автоматически на любом языке — обновите карточку через минуту."
+            if not payload.force_refresh
+            else "Принудительное обновление: речь перераспознаётся с автоопределением языка."
+        ),
     )
