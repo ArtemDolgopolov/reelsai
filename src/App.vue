@@ -7,6 +7,7 @@ import {
   Check,
   ChevronRight,
   CircleHelp,
+  Copy,
   ExternalLink,
   Eye,
   FileText,
@@ -45,6 +46,11 @@ const editingSection = ref(null)
 const draft = ref('')
 const saveState = ref('idle')
 const saveError = ref('')
+const copiedSection = ref('')
+const speechPolling = ref(false)
+
+let speechPollTimer = null
+let copiedTimer = null
 
 const sectionLimits = {
   hook: 200,
@@ -56,6 +62,13 @@ const scriptLines = computed(() =>
   (selectedReel.value?.script || '')
     .split(/\r?\n/)
     .filter((line) => line.trim()),
+)
+
+const overviewParagraphs = computed(() =>
+  (selectedReel.value?.overview || '')
+    .split(/\n\n+/)
+    .map((part) => part.trim())
+    .filter(Boolean),
 )
 
 const filteredReels = computed(() => {
@@ -113,6 +126,52 @@ function navigate(page) {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
+function stopSpeechPolling() {
+  speechPolling.value = false
+  if (speechPollTimer) {
+    window.clearInterval(speechPollTimer)
+    speechPollTimer = null
+  }
+}
+
+function startSpeechPolling(reelId) {
+  stopSpeechPolling()
+  speechPolling.value = true
+  let attempts = 0
+  speechPollTimer = window.setInterval(async () => {
+    attempts += 1
+    if (attempts > 30 || currentPage.value !== 'detail' || selectedReel.value?.id !== reelId) {
+      stopSpeechPolling()
+      return
+    }
+    try {
+      const response = await fetch(`/api/reels/${reelId}`, { cache: 'no-store' })
+      if (!response.ok) return
+      const body = await response.json()
+      if (selectedReel.value?.id !== reelId) return
+      selectedReel.value = body
+      if (!body.speech_pending) stopSpeechPolling()
+    } catch {
+      // Keep showing the instant overview while speech refinement continues.
+    }
+  }, 4000)
+}
+
+async function copySection(section) {
+  const value = selectedReel.value?.[section] || ''
+  if (!value) return
+  try {
+    await navigator.clipboard.writeText(value)
+    copiedSection.value = section
+    if (copiedTimer) window.clearTimeout(copiedTimer)
+    copiedTimer = window.setTimeout(() => {
+      if (copiedSection.value === section) copiedSection.value = ''
+    }, 1600)
+  } catch {
+    saveError.value = 'Не удалось скопировать текст'
+  }
+}
+
 async function loadHomeReels() {
   homeLoading.value = true
   try {
@@ -130,12 +189,15 @@ async function openReel(reelId) {
   detailLoading.value = true
   saveError.value = ''
   editingSection.value = null
+  copiedSection.value = ''
+  stopSpeechPolling()
   navigate('detail')
 
   try {
     const response = await fetch(`/api/reels/${reelId}`, { cache: 'no-store' })
     if (!response.ok) throw new Error('Не удалось открыть рилс')
     selectedReel.value = await response.json()
+    if (selectedReel.value?.speech_pending) startSpeechPolling(reelId)
   } catch (error) {
     saveError.value = error.message
   } finally {
@@ -279,6 +341,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('hashchange', syncPageFromHash)
+  stopSpeechPolling()
+  if (copiedTimer) window.clearTimeout(copiedTimer)
 })
 </script>
 
@@ -517,9 +581,8 @@ onBeforeUnmount(() => {
 
         <div v-if="detailLoading || !selectedReel" class="empty-state">
           <Sparkles :size="30" />
-          <strong>{{ detailLoading ? 'Распознаём речь ролика…' : 'Рилс не выбран' }}</strong>
-          <p v-if="detailLoading">Скачиваем аудио и делаем расшифровку — обычно 10–40 секунд.</p>
-          <p v-else-if="saveError">{{ saveError }}</p>
+          <strong>{{ detailLoading ? 'Открываем разбор…' : 'Рилс не выбран' }}</strong>
+          <p v-if="saveError">{{ saveError }}</p>
         </div>
 
         <div v-else class="detail-layout">
@@ -554,7 +617,7 @@ onBeforeUnmount(() => {
           <div class="analysis-column">
             <header class="detail-title">
               <div>
-                <span class="eyebrow">Разбор трендового ролика</span>
+                <span class="eyebrow">AI-разбор</span>
                 <h1>{{ selectedReel.title }}</h1>
               </div>
               <button class="icon-button" type="button" aria-label="Другие действия">
@@ -591,27 +654,43 @@ onBeforeUnmount(() => {
             <div class="insight-list">
               <div v-if="saveState === 'saved'" class="save-notice success">
                 <Check :size="15" />
-                Изменения сохранены в PostgreSQL
+                Изменения сохранены
               </div>
               <div v-if="saveError" class="save-notice error">
                 <CircleHelp :size="15" />
                 {{ saveError }}
               </div>
 
+              <section class="ai-chat-card">
+                <div class="ai-chat-head">
+                  <span class="ai-avatar"><Sparkles :size="16" /></span>
+                  <div>
+                    <strong>Reels AI</strong>
+                    <small>Про что ролик</small>
+                  </div>
+                  <span v-if="selectedReel.speech_pending || speechPolling" class="ai-status">Уточняю по речи…</span>
+                </div>
+                <div class="ai-chat-body">
+                  <p v-for="(paragraph, index) in overviewParagraphs" :key="index">{{ paragraph }}</p>
+                </div>
+              </section>
+
               <article class="insight-card hook-card">
                 <div class="insight-title">
                   <span class="insight-icon"><Zap :size="18" fill="currentColor" /></span>
                   <span>
                     <strong>Hook</strong>
-                    <small>Первые 3 секунды — то, что останавливает скролл.</small>
+                    <small>Первые секунды — стоп-скролл.</small>
                   </span>
-                  <button
-                    v-if="editingSection !== 'hook'"
-                    type="button"
-                    @click="startEditing('hook')"
-                  >
-                    <Pencil :size="14" /> Редактировать
-                  </button>
+                  <div v-if="editingSection !== 'hook'" class="insight-actions">
+                    <button type="button" @click="copySection('hook')">
+                      <Copy :size="14" />
+                      {{ copiedSection === 'hook' ? 'Скопировано' : 'Копировать' }}
+                    </button>
+                    <button type="button" @click="startEditing('hook')">
+                      <Pencil :size="14" /> Редактировать
+                    </button>
+                  </div>
                 </div>
                 <div v-if="editingSection === 'hook'" class="section-editor">
                   <textarea
@@ -637,9 +716,7 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
                 </div>
-                <blockquote v-else>
-                  «{{ selectedReel.hook || 'Расшифровка речи пока недоступна — hook появится после STT.' }}»
-                </blockquote>
+                <blockquote v-else>«{{ selectedReel.hook || 'Добавь hook вручную' }}»</blockquote>
                 <span class="counter">
                   {{ editingSection === 'hook' ? draft.length : (selectedReel.hook || '').length }}/{{ sectionLimits.hook }}
                 </span>
@@ -650,15 +727,17 @@ onBeforeUnmount(() => {
                   <span class="insight-icon"><FileText :size="18" /></span>
                   <span>
                     <strong>Script</strong>
-                    <small>Основной сценарий ролика и ключевые тезисы.</small>
+                    <small>Структура и ключевые тезисы.</small>
                   </span>
-                  <button
-                    v-if="editingSection !== 'script'"
-                    type="button"
-                    @click="startEditing('script')"
-                  >
-                    <Pencil :size="14" /> Редактировать
-                  </button>
+                  <div v-if="editingSection !== 'script'" class="insight-actions">
+                    <button type="button" @click="copySection('script')">
+                      <Copy :size="14" />
+                      {{ copiedSection === 'script' ? 'Скопировано' : 'Копировать' }}
+                    </button>
+                    <button type="button" @click="startEditing('script')">
+                      <Pencil :size="14" /> Редактировать
+                    </button>
+                  </div>
                 </div>
                 <div v-if="editingSection === 'script'" class="section-editor">
                   <textarea
@@ -669,7 +748,7 @@ onBeforeUnmount(() => {
                     @keydown.ctrl.enter.prevent="saveSection('script')"
                   ></textarea>
                   <div class="editor-actions">
-                    <span>Каждый пункт пишите с новой строки</span>
+                    <span>Каждый пункт с новой строки</span>
                     <button class="cancel-button" type="button" @click="cancelEditing">
                       <X :size="14" /> Отмена
                     </button>
@@ -687,7 +766,7 @@ onBeforeUnmount(() => {
                 <ol v-else-if="scriptLines.length">
                   <li v-for="line in scriptLines" :key="line">{{ line }}</li>
                 </ol>
-                <p v-else class="preserve-lines">Скрипт появится, когда будет расшифровка речи.</p>
+                <p v-else class="preserve-lines">Добавь скрипт вручную</p>
                 <span class="counter">
                   {{ editingSection === 'script' ? draft.length : (selectedReel.script || '').length }}/{{ sectionLimits.script }}
                 </span>
@@ -698,15 +777,17 @@ onBeforeUnmount(() => {
                   <span class="insight-icon"><Target :size="18" /></span>
                   <span>
                     <strong>Call to Action</strong>
-                    <small>Призыв к действию в конце ролика.</small>
+                    <small>Призыв в финале ролика.</small>
                   </span>
-                  <button
-                    v-if="editingSection !== 'cta'"
-                    type="button"
-                    @click="startEditing('cta')"
-                  >
-                    <Pencil :size="14" /> Редактировать
-                  </button>
+                  <div v-if="editingSection !== 'cta'" class="insight-actions">
+                    <button type="button" @click="copySection('cta')">
+                      <Copy :size="14" />
+                      {{ copiedSection === 'cta' ? 'Скопировано' : 'Копировать' }}
+                    </button>
+                    <button type="button" @click="startEditing('cta')">
+                      <Pencil :size="14" /> Редактировать
+                    </button>
+                  </div>
                 </div>
                 <div v-if="editingSection === 'cta'" class="section-editor">
                   <textarea

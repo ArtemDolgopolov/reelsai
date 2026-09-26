@@ -156,9 +156,12 @@ def _transcribe_ids_worker(reel_ids: list[UUID]) -> None:
             logger.warning("Background STT failed for %s: %s", reel_id, exc)
 
 
-def schedule_transcripts(reel_ids: list[UUID]) -> None:
-    """Fire-and-forget STT for a batch of reel IDs (home discovery)."""
-    pending = [reel_id for reel_id in reel_ids if reel_id]
+def schedule_transcripts(reel_ids: list[UUID] | UUID) -> None:
+    """Fire-and-forget STT for a batch of reel IDs (home discovery / reel open)."""
+    if isinstance(reel_ids, UUID):
+        pending = [reel_ids]
+    else:
+        pending = [reel_id for reel_id in reel_ids if reel_id]
     if not pending:
         return
     thread = threading.Thread(

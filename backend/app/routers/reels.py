@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from sqlmodel import Session
 
 from app.config import get_settings
@@ -10,7 +10,7 @@ from app.schemas import ReelDetail, ReelListItem, ReelUpdateRequest
 from app.services.discovery import fetch_home_discover_reels
 from app.services.instagram_free import looks_like_real_transcript
 from app.services.serializers import reel_to_detail
-from app.services.stt_jobs import ensure_reel_transcript
+from app.services.stt_jobs import schedule_transcripts
 
 router = APIRouter(prefix="/reels", tags=["reels"])
 
@@ -54,7 +54,11 @@ def list_reels(
 
 
 @router.get("/{reel_id}", response_model=ReelDetail)
-def get_reel(reel_id: UUID, session: Session = Depends(get_session)) -> ReelDetail:
+def get_reel(
+    reel_id: UUID,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+) -> ReelDetail:
     reel = session.get(Reel, reel_id)
     if reel is None:
         raise HTTPException(status_code=404, detail="Reel not found")
@@ -62,10 +66,9 @@ def get_reel(reel_id: UUID, session: Session = Depends(get_session)) -> ReelDeta
     if competitor is None:
         raise HTTPException(status_code=404, detail="Competitor not found")
 
-    # On open: finish speech recognition before returning Hook/Script/CTA.
+    # Instant response — refine Hook/Script/CTA from speech in the background.
     if not looks_like_real_transcript(reel.transcript):
-        reel = ensure_reel_transcript(session, reel, competitor)
-        session.refresh(reel)
+        background_tasks.add_task(schedule_transcripts, [reel.id])
 
     return reel_to_detail(reel, competitor)
 

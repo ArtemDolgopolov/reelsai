@@ -3,7 +3,8 @@ from datetime import datetime
 from app.models import Competitor, Reel
 from app.schemas import CompetitorRead, ReelDetail, ReelListItem
 from app.services.instagram_free import looks_like_real_transcript
-from app.services.transcript_sections import split_transcript_into_sections
+from app.services.overview import build_reel_overview
+from app.services.transcript_sections import DEFAULT_CTA, split_transcript_into_sections
 
 
 def format_duration(seconds: int) -> str:
@@ -26,19 +27,27 @@ def competitor_to_read(competitor: Competitor) -> CompetitorRead:
 
 
 def analysis_sections(reel: Reel) -> tuple[str, str, str]:
-    """Hook / Script / CTA from spoken audio only — never Instagram captions."""
+    """Hook / Script / CTA: prefer spoken audio, otherwise caption-based drafts."""
     spoken = (reel.transcript or "").strip()
+    caption = (reel.caption or reel.title or "").strip()
+
     if looks_like_real_transcript(spoken):
         stored_script = (reel.script or "").strip()
-        # Re-split legacy rows where the whole transcript was dumped into script.
         if not stored_script or stored_script == spoken:
-            return split_transcript_into_sections(spoken)
+            return split_transcript_into_sections(spoken, caption)
         return (
             (reel.hook or "").strip(),
             stored_script,
-            (reel.cta or "").strip() or split_transcript_into_sections(spoken)[2],
+            (reel.cta or "").strip() or split_transcript_into_sections(spoken, caption)[2],
         )
-    return "", "", (reel.cta or "").strip()
+
+    stored_hook = (reel.hook or "").strip()
+    stored_script = (reel.script or "").strip()
+    stored_cta = (reel.cta or "").strip()
+    if stored_hook and stored_script:
+        return stored_hook, stored_script, stored_cta or DEFAULT_CTA
+
+    return split_transcript_into_sections(None, caption)
 
 
 def reel_to_list_item(reel: Reel, username: str) -> ReelListItem:
@@ -55,13 +64,16 @@ def reel_to_list_item(reel: Reel, username: str) -> ReelListItem:
         views_count=reel.views_count,
         likes_count=reel.likes_count,
         comments_count=reel.comments_count,
-        has_transcript=len(transcript) >= 40,
+        has_transcript=looks_like_real_transcript(transcript),
         status=reel.status,
     )
 
 
 def reel_to_detail(reel: Reel, competitor: Competitor) -> ReelDetail:
     hook, script, cta = analysis_sections(reel)
+    duration = format_duration(reel.duration_seconds)
+    views_label = format_views(reel.views_count)
+    spoken = (reel.transcript or "").strip()
     return ReelDetail(
         id=reel.id,
         competitor_id=reel.competitor_id,
@@ -70,7 +82,7 @@ def reel_to_detail(reel: Reel, competitor: Competitor) -> ReelDetail:
         author=f"@{competitor.username}",
         author_name=competitor.full_name,
         avatar_url=competitor.avatar_url,
-        duration=format_duration(reel.duration_seconds),
+        duration=duration,
         duration_seconds=reel.duration_seconds,
         views_count=reel.views_count,
         likes_count=reel.likes_count,
@@ -80,10 +92,17 @@ def reel_to_detail(reel: Reel, competitor: Competitor) -> ReelDetail:
         thumbnail_url=reel.thumbnail_url,
         video_url=reel.video_url,
         overlay_text=reel.overlay_text,
+        overview=build_reel_overview(
+            reel,
+            competitor,
+            views_label=views_label,
+            duration_label=duration,
+        ),
         hook=hook,
         script=script,
-        cta=cta,
+        cta=cta or DEFAULT_CTA,
         transcript=reel.transcript,
+        speech_pending=not looks_like_real_transcript(spoken),
         why_it_works=reel.why_it_works,
         posted_at=reel.posted_at,
         status=reel.status,

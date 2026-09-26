@@ -57,10 +57,12 @@ class ReelDetail(BaseModel):
     thumbnail_url: Optional[str] = None
     video_url: Optional[str] = None
     overlay_text: Optional[str] = None
+    overview: str = ""
     hook: str
     script: str
     cta: str
     transcript: Optional[str] = None
+    speech_pending: bool = False
     why_it_works: Optional[str] = None
     posted_at: Optional[datetime] = None
     status: ReelStatus
