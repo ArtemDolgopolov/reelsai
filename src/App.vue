@@ -14,12 +14,14 @@ import {
   MoreVertical,
   Pencil,
   Play,
+  Save,
   Search,
   Settings,
   Sparkles,
   Target,
   Users,
   WandSparkles,
+  X,
   Zap,
 } from '@lucide/vue'
 
@@ -30,6 +32,36 @@ const searchQuery = ref('')
 const competitorHandle = ref('@vibecoding_creator')
 const competitorLoaded = ref(true)
 const detailTab = ref('analysis')
+const analysis = ref({
+  hook: 'Я собрал полноценный SaaS за 1 вечер. Без кода. С помощью Cursor.',
+  script: [
+    'Показываю идею',
+    'Открываю Cursor и объясняю, что нужно',
+    'AI генерирует приложение',
+    'Тестирую, вношу правки',
+    'Показываю готовый результат',
+  ].join('\n'),
+  cta: [
+    'Попробуйте Cursor сами — ссылка в описании.',
+    'И напишите в комментариях, какой проект вы бы собрали!',
+  ].join('\n'),
+})
+const analysisLoading = ref(true)
+const editingSection = ref(null)
+const draft = ref('')
+const saveState = ref('idle')
+const saveError = ref('')
+let analysisEvents
+
+const scriptLines = computed(() =>
+  analysis.value.script.split(/\r?\n/).filter((line) => line.trim()),
+)
+
+const sectionLimits = {
+  hook: 200,
+  script: 2000,
+  cta: 500,
+}
 
 const reels = [
   {
@@ -149,13 +181,95 @@ function loadCompetitor() {
   competitorLoaded.value = true
 }
 
+function applyAnalysis(nextAnalysis) {
+  analysis.value = {
+    hook: nextAnalysis.hook,
+    script: nextAnalysis.script,
+    cta: nextAnalysis.cta,
+  }
+}
+
+async function loadAnalysis() {
+  analysisLoading.value = true
+  saveError.value = ''
+
+  try {
+    const response = await fetch('/api/analysis/1', { cache: 'no-store' })
+    if (!response.ok) throw new Error('Не удалось загрузить сохранённый анализ')
+    applyAnalysis(await response.json())
+  } catch (error) {
+    saveError.value = error.message
+  } finally {
+    analysisLoading.value = false
+  }
+}
+
+function startEditing(section) {
+  editingSection.value = section
+  draft.value = analysis.value[section]
+  saveState.value = 'idle'
+  saveError.value = ''
+}
+
+function cancelEditing() {
+  editingSection.value = null
+  draft.value = ''
+  saveError.value = ''
+}
+
+async function saveSection(section) {
+  if (saveState.value === 'saving') return
+
+  saveState.value = 'saving'
+  saveError.value = ''
+
+  try {
+    const response = await fetch('/api/analysis/1', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ section, value: draft.value }),
+    })
+    const body = await response.json()
+
+    if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error('Редактирование разрешено только с вашего доверенного IP')
+      }
+      throw new Error(body.error || 'Не удалось сохранить изменения')
+    }
+
+    applyAnalysis(body)
+    editingSection.value = null
+    draft.value = ''
+    saveState.value = 'saved'
+    window.setTimeout(() => {
+      if (saveState.value === 'saved') saveState.value = 'idle'
+    }, 2200)
+  } catch (error) {
+    saveState.value = 'error'
+    saveError.value = error.message
+  }
+}
+
 function syncPageFromHash() {
   const page = window.location.hash.slice(1)
   if (pages.includes(page)) currentPage.value = page
 }
 
-onMounted(() => window.addEventListener('hashchange', syncPageFromHash))
-onBeforeUnmount(() => window.removeEventListener('hashchange', syncPageFromHash))
+onMounted(() => {
+  window.addEventListener('hashchange', syncPageFromHash)
+  loadAnalysis()
+
+  analysisEvents = new EventSource('/api/events')
+  analysisEvents.addEventListener('analysis', (event) => {
+    applyAnalysis(JSON.parse(event.data))
+  })
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('hashchange', syncPageFromHash)
+  analysisEvents?.close()
+})
 </script>
 
 <template>
@@ -400,6 +514,15 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncPageFromHash)
             </div>
 
             <div v-if="detailTab === 'analysis'" class="insight-list">
+              <div v-if="saveState === 'saved'" class="save-notice success">
+                <Check :size="15" />
+                Изменения сохранены в базе и обновлены на сайте
+              </div>
+              <div v-if="saveError" class="save-notice error">
+                <CircleHelp :size="15" />
+                {{ saveError }}
+              </div>
+
               <article class="insight-card hook-card">
                 <div class="insight-title">
                   <span class="insight-icon"><Zap :size="18" fill="currentColor" /></span>
@@ -407,10 +530,43 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncPageFromHash)
                     <strong>Hook</strong>
                     <small>Первые 3 секунды — то, что останавливает скролл.</small>
                   </span>
-                  <button type="button"><Pencil :size="14" /> Редактировать</button>
+                  <button
+                    v-if="editingSection !== 'hook'"
+                    type="button"
+                    :disabled="analysisLoading"
+                    @click="startEditing('hook')"
+                  >
+                    <Pencil :size="14" /> Редактировать
+                  </button>
                 </div>
-                <blockquote>«Я собрал полноценный SaaS за 1 вечер. Без кода. С помощью Cursor.»</blockquote>
-                <span class="counter">20/200</span>
+                <div v-if="editingSection === 'hook'" class="section-editor">
+                  <textarea
+                    v-model="draft"
+                    rows="3"
+                    :maxlength="sectionLimits.hook"
+                    autofocus
+                    @keydown.ctrl.enter.prevent="saveSection('hook')"
+                  ></textarea>
+                  <div class="editor-actions">
+                    <span>Ctrl + Enter, чтобы сохранить</span>
+                    <button class="cancel-button" type="button" @click="cancelEditing">
+                      <X :size="14" /> Отмена
+                    </button>
+                    <button
+                      class="save-button"
+                      type="button"
+                      :disabled="saveState === 'saving' || !draft.trim()"
+                      @click="saveSection('hook')"
+                    >
+                      <Save :size="14" />
+                      {{ saveState === 'saving' ? 'Сохраняем...' : 'Сохранить' }}
+                    </button>
+                  </div>
+                </div>
+                <blockquote v-else>«{{ analysis.hook }}»</blockquote>
+                <span class="counter">
+                  {{ editingSection === 'hook' ? draft.length : analysis.hook.length }}/{{ sectionLimits.hook }}
+                </span>
               </article>
 
               <article class="insight-card script-card">
@@ -420,16 +576,45 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncPageFromHash)
                     <strong>Script</strong>
                     <small>Основной сценарий ролика и ключевые тезисы.</small>
                   </span>
-                  <button type="button"><Pencil :size="14" /> Редактировать</button>
+                  <button
+                    v-if="editingSection !== 'script'"
+                    type="button"
+                    :disabled="analysisLoading"
+                    @click="startEditing('script')"
+                  >
+                    <Pencil :size="14" /> Редактировать
+                  </button>
                 </div>
-                <ol>
-                  <li>Показываю идею</li>
-                  <li>Открываю Cursor и объясняю, что нужно</li>
-                  <li>AI генерирует приложение</li>
-                  <li>Тестирую, вношу правки</li>
-                  <li>Показываю готовый результат</li>
+                <div v-if="editingSection === 'script'" class="section-editor">
+                  <textarea
+                    v-model="draft"
+                    rows="7"
+                    :maxlength="sectionLimits.script"
+                    autofocus
+                    @keydown.ctrl.enter.prevent="saveSection('script')"
+                  ></textarea>
+                  <div class="editor-actions">
+                    <span>Каждый пункт пишите с новой строки</span>
+                    <button class="cancel-button" type="button" @click="cancelEditing">
+                      <X :size="14" /> Отмена
+                    </button>
+                    <button
+                      class="save-button"
+                      type="button"
+                      :disabled="saveState === 'saving' || !draft.trim()"
+                      @click="saveSection('script')"
+                    >
+                      <Save :size="14" />
+                      {{ saveState === 'saving' ? 'Сохраняем...' : 'Сохранить' }}
+                    </button>
+                  </div>
+                </div>
+                <ol v-else>
+                  <li v-for="line in scriptLines" :key="line">{{ line }}</li>
                 </ol>
-                <span class="counter">350/2000</span>
+                <span class="counter">
+                  {{ editingSection === 'script' ? draft.length : analysis.script.length }}/{{ sectionLimits.script }}
+                </span>
               </article>
 
               <article class="insight-card cta-card">
@@ -439,10 +624,43 @@ onBeforeUnmount(() => window.removeEventListener('hashchange', syncPageFromHash)
                     <strong>Call to Action</strong>
                     <small>Призыв к действию в конце ролика.</small>
                   </span>
-                  <button type="button"><Pencil :size="14" /> Редактировать</button>
+                  <button
+                    v-if="editingSection !== 'cta'"
+                    type="button"
+                    :disabled="analysisLoading"
+                    @click="startEditing('cta')"
+                  >
+                    <Pencil :size="14" /> Редактировать
+                  </button>
                 </div>
-                <p>Попробуйте Cursor сами — ссылка в описании.<br />И напишите в комментариях, какой проект вы бы собрали!</p>
-                <span class="counter">95/500</span>
+                <div v-if="editingSection === 'cta'" class="section-editor">
+                  <textarea
+                    v-model="draft"
+                    rows="4"
+                    :maxlength="sectionLimits.cta"
+                    autofocus
+                    @keydown.ctrl.enter.prevent="saveSection('cta')"
+                  ></textarea>
+                  <div class="editor-actions">
+                    <span>Ctrl + Enter, чтобы сохранить</span>
+                    <button class="cancel-button" type="button" @click="cancelEditing">
+                      <X :size="14" /> Отмена
+                    </button>
+                    <button
+                      class="save-button"
+                      type="button"
+                      :disabled="saveState === 'saving' || !draft.trim()"
+                      @click="saveSection('cta')"
+                    >
+                      <Save :size="14" />
+                      {{ saveState === 'saving' ? 'Сохраняем...' : 'Сохранить' }}
+                    </button>
+                  </div>
+                </div>
+                <p v-else class="preserve-lines">{{ analysis.cta }}</p>
+                <span class="counter">
+                  {{ editingSection === 'cta' ? draft.length : analysis.cta.length }}/{{ sectionLimits.cta }}
+                </span>
               </article>
 
               <div class="pro-tip">

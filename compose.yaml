@@ -1,8 +1,26 @@
 services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: reelsai-api
+    restart: unless-stopped
+    environment:
+      EDITOR_IP: "185.113.39.206"
+    volumes:
+      - reelsai-data:/data
+
   web:
     build:
       context: .
     container_name: reelsai-web
     restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
     ports:
       - "80:80"
+
+volumes:
+  reelsai-data:
+    name: reelsai-data

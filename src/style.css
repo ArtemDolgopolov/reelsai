@@ -942,6 +942,29 @@ img {
   margin-top: 17px;
 }
 
+.save-notice {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid;
+  border-radius: 9px;
+}
+
+.save-notice.success {
+  color: #15803d;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.save-notice.error {
+  color: #b42318;
+  background: #fff5f4;
+  border-color: #fecaca;
+}
+
 .insight-card {
   position: relative;
   padding: 15px 16px 22px;
@@ -1023,6 +1046,81 @@ img {
   cursor: pointer;
 }
 
+.insight-title button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.section-editor {
+  margin: 13px 0 2px 40px;
+}
+
+.section-editor textarea {
+  display: block;
+  width: 100%;
+  min-height: 88px;
+  padding: 11px 12px;
+  color: #322c39;
+  font-size: 12px;
+  line-height: 1.55;
+  resize: vertical;
+  background: rgb(255 255 255 / 88%);
+  border: 1px solid #d8c8f7;
+  border-radius: 8px;
+  outline: 0;
+  box-shadow: 0 0 0 3px rgb(124 58 237 / 7%);
+}
+
+.section-editor textarea:focus {
+  border-color: #9c75ea;
+  box-shadow: 0 0 0 4px rgb(124 58 237 / 12%);
+}
+
+.editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.editor-actions > span {
+  margin-right: auto;
+  color: #918a98;
+  font-size: 9px;
+}
+
+.editor-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 31px;
+  padding: 0 10px;
+  font-size: 10px;
+  font-weight: 750;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.cancel-button {
+  color: #635c6b;
+  background: white;
+  border: 1px solid #ddd7e5;
+}
+
+.save-button {
+  color: white;
+  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+  border: 0;
+  box-shadow: 0 5px 13px rgb(124 58 237 / 20%);
+}
+
+.save-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .insight-card blockquote,
 .insight-card p,
 .insight-card ol {
@@ -1042,6 +1140,10 @@ img {
 
 .insight-card ol {
   padding-left: 18px;
+}
+
+.preserve-lines {
+  white-space: pre-line;
 }
 
 .counter {
@@ -1445,8 +1547,17 @@ img {
 
   .insight-card blockquote,
   .insight-card p,
-  .insight-card ol {
+  .insight-card ol,
+  .section-editor {
     margin-left: 0;
+  }
+
+  .editor-actions {
+    flex-wrap: wrap;
+  }
+
+  .editor-actions > span {
+    width: 100%;
   }
 }
 
