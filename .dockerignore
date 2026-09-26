@@ -3,5 +3,13 @@
 .cursor
 node_modules
 dist
+.data
+.venv
+backend/.venv
+__pycache__
+*.pyc
 design reference.jpg
+.env
+.env.*
+!.env.example
 *.log

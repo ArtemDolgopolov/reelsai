@@ -30,32 +30,19 @@ const pageFromHash = window.location.hash.slice(1)
 const currentPage = ref(pages.includes(pageFromHash) ? pageFromHash : 'home')
 const searchQuery = ref('')
 const competitorHandle = ref('@vibecoding_creator')
-const competitorLoaded = ref(true)
+const competitor = ref(null)
+const competitorReels = ref([])
+const competitorMessage = ref('')
+const competitorLoading = ref(false)
+const homeReels = ref([])
+const homeLoading = ref(true)
+const selectedReel = ref(null)
+const detailLoading = ref(false)
 const detailTab = ref('analysis')
-const analysis = ref({
-  hook: 'Я собрал полноценный SaaS за 1 вечер. Без кода. С помощью Cursor.',
-  script: [
-    'Показываю идею',
-    'Открываю Cursor и объясняю, что нужно',
-    'AI генерирует приложение',
-    'Тестирую, вношу правки',
-    'Показываю готовый результат',
-  ].join('\n'),
-  cta: [
-    'Попробуйте Cursor сами — ссылка в описании.',
-    'И напишите в комментариях, какой проект вы бы собрали!',
-  ].join('\n'),
-})
-const analysisLoading = ref(true)
 const editingSection = ref(null)
 const draft = ref('')
 const saveState = ref('idle')
 const saveError = ref('')
-let analysisEvents
-
-const scriptLines = computed(() =>
-  analysis.value.script.split(/\r?\n/).filter((line) => line.trim()),
-)
 
 const sectionLimits = {
   hook: 200,
@@ -63,108 +50,40 @@ const sectionLimits = {
   cta: 500,
 }
 
-const reels = [
-  {
-    id: 1,
-    title: 'Как я собрал SaaS за 1 вечер с Cursor',
-    author: '@vibecoding_creator',
-    duration: '0:28',
-    image:
-      'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=700&q=85',
-    hook: 'BUILD APPS WITH AI',
-  },
-  {
-    id: 2,
-    title: 'От идеи до приложения за 10 минут',
-    author: '@buildwithmarco',
-    duration: '0:35',
-    image:
-      'https://images.unsplash.com/photo-1555066931-4365d14bab8c?auto=format&fit=crop&w=700&q=85',
-    hook: 'IDEA TO APP IN 10 MIN',
-  },
-  {
-    id: 3,
-    title: 'Мои 5 любимых AI-инструментов',
-    author: '@futuredev',
-    duration: '0:41',
-    image:
-      'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=700&q=85',
-    hook: 'VIBE CODING TIPS',
-  },
-  {
-    id: 4,
-    title: 'Больше не пишу код вручную',
-    author: '@devwithalex',
-    duration: '0:29',
-    image:
-      'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=700&q=85',
-    hook: 'JUST DESCRIBE IT',
-  },
-  {
-    id: 5,
-    title: 'Как я запустил продукт с помощью AI',
-    author: '@nocodeandy',
-    duration: '0:52',
-    image:
-      'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=700&q=85',
-    hook: 'FROM PROMPT TO PRODUCT',
-  },
-  {
-    id: 6,
-    title: 'AI-инструменты, которые реально использую',
-    author: '@buildinpublic',
-    duration: '0:35',
-    image:
-      'https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=700&q=85',
-    hook: 'AI TOOLS I ACTUALLY USE',
-  },
-  {
-    id: 7,
-    title: 'AI-инструменты в 2024',
-    author: '@vibecoding_creator',
-    duration: '0:43',
-    image:
-      'https://images.unsplash.com/photo-1550439062-609e1531270e?auto=format&fit=crop&w=700&q=85',
-    hook: 'AI TOOLS IN 2024',
-  },
-  {
-    id: 8,
-    title: 'Мой сетап для вайб-кодинга',
-    author: '@vibecoding_creator',
-    duration: '0:27',
-    image:
-      'https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=700&q=85',
-    hook: 'MY CODING SETUP',
-  },
-  {
-    id: 9,
-    title: '3 ошибки новичков',
-    author: '@vibecoding_creator',
-    duration: '0:46',
-    image:
-      'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=700&q=85',
-    hook: '3 BEGINNER MISTAKES',
-  },
-  {
-    id: 10,
-    title: 'Лучшие промпты для Cursor',
-    author: '@vibecoding_creator',
-    duration: '0:49',
-    image:
-      'https://images.unsplash.com/photo-1521737711867-e3b97375f902?auto=format&fit=crop&w=700&q=85',
-    hook: 'BEST CURSOR PROMPTS',
-  },
-]
+const scriptLines = computed(() =>
+  (selectedReel.value?.script || '')
+    .split(/\r?\n/)
+    .filter((line) => line.trim()),
+)
 
 const filteredReels = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
-  if (!query) return reels.slice(0, 6)
-  return reels.filter(
+  if (!query) return homeReels.value
+  return homeReels.value.filter(
     (reel) =>
       reel.title.toLowerCase().includes(query) ||
       reel.author.toLowerCase().includes(query),
   )
 })
+
+const selectedDurationLabel = computed(() => selectedReel.value?.duration || '0:00')
+const selectedViewsLabel = computed(() => formatViews(selectedReel.value?.views_count || 0))
+
+function formatViews(count) {
+  if (count >= 1_000_000) {
+    const value = count / 1_000_000
+    return `${String(value).replace(/\.0$/, '')}M`
+  }
+  if (count >= 1_000) {
+    const value = count / 1_000
+    return `${String(value).replace(/\.0$/, '')}K`
+  }
+  return String(count)
+}
+
+function formatFollowers(count) {
+  return formatViews(count)
+}
 
 function navigate(page) {
   currentPage.value = page
@@ -172,41 +91,72 @@ function navigate(page) {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-function openReel() {
-  detailTab.value = 'analysis'
-  navigate('detail')
-}
-
-function loadCompetitor() {
-  competitorLoaded.value = true
-}
-
-function applyAnalysis(nextAnalysis) {
-  analysis.value = {
-    hook: nextAnalysis.hook,
-    script: nextAnalysis.script,
-    cta: nextAnalysis.cta,
-  }
-}
-
-async function loadAnalysis() {
-  analysisLoading.value = true
-  saveError.value = ''
-
+async function loadHomeReels() {
+  homeLoading.value = true
   try {
-    const response = await fetch('/api/analysis/1', { cache: 'no-store' })
-    if (!response.ok) throw new Error('Не удалось загрузить сохранённый анализ')
-    applyAnalysis(await response.json())
+    const response = await fetch('/api/reels?limit=20', { cache: 'no-store' })
+    if (!response.ok) throw new Error('Не удалось загрузить рилсы')
+    homeReels.value = await response.json()
   } catch (error) {
     saveError.value = error.message
   } finally {
-    analysisLoading.value = false
+    homeLoading.value = false
+  }
+}
+
+async function openReel(reelId) {
+  detailTab.value = 'analysis'
+  detailLoading.value = true
+  saveError.value = ''
+  editingSection.value = null
+  navigate('detail')
+
+  try {
+    const response = await fetch(`/api/reels/${reelId}`, { cache: 'no-store' })
+    if (!response.ok) throw new Error('Не удалось открыть рилс')
+    selectedReel.value = await response.json()
+  } catch (error) {
+    saveError.value = error.message
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+async function loadCompetitor() {
+  competitorLoading.value = true
+  competitorMessage.value = ''
+  saveError.value = ''
+
+  try {
+    const response = await fetch('/api/competitors/load', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: competitorHandle.value }),
+    })
+    const body = await response.json()
+    if (!response.ok) {
+      const detail = Array.isArray(body.detail)
+        ? body.detail.map((item) => item.msg || item).join('; ')
+        : body.detail
+      throw new Error(detail || 'Не удалось загрузить конкурента')
+    }
+
+    competitor.value = body.competitor
+    competitorReels.value = body.reels
+    competitorMessage.value = body.message
+    competitorHandle.value = `@${body.competitor.username}`
+    await loadHomeReels()
+  } catch (error) {
+    saveError.value = error.message
+  } finally {
+    competitorLoading.value = false
   }
 }
 
 function startEditing(section) {
+  if (!selectedReel.value) return
   editingSection.value = section
-  draft.value = analysis.value[section]
+  draft.value = selectedReel.value[section] || ''
   saveState.value = 'idle'
   saveError.value = ''
 }
@@ -218,14 +168,14 @@ function cancelEditing() {
 }
 
 async function saveSection(section) {
-  if (saveState.value === 'saving') return
+  if (!selectedReel.value || saveState.value === 'saving') return
 
   saveState.value = 'saving'
   saveError.value = ''
 
   try {
-    const response = await fetch('/api/analysis/1', {
-      method: 'PUT',
+    const response = await fetch(`/api/reels/${selectedReel.value.id}`, {
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ section, value: draft.value }),
     })
@@ -235,10 +185,13 @@ async function saveSection(section) {
       if (response.status === 403) {
         throw new Error('Редактирование разрешено только с вашего доверенного IP')
       }
-      throw new Error(body.error || 'Не удалось сохранить изменения')
+      const detail = Array.isArray(body.detail)
+        ? body.detail.map((item) => item.msg || item).join('; ')
+        : body.detail
+      throw new Error(detail || 'Не удалось сохранить изменения')
     }
 
-    applyAnalysis(body)
+    selectedReel.value = body
     editingSection.value = null
     draft.value = ''
     saveState.value = 'saved'
@@ -256,19 +209,14 @@ function syncPageFromHash() {
   if (pages.includes(page)) currentPage.value = page
 }
 
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener('hashchange', syncPageFromHash)
-  loadAnalysis()
-
-  analysisEvents = new EventSource('/api/events')
-  analysisEvents.addEventListener('analysis', (event) => {
-    applyAnalysis(JSON.parse(event.data))
-  })
+  await loadHomeReels()
+  await loadCompetitor()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('hashchange', syncPageFromHash)
-  analysisEvents?.close()
 })
 </script>
 
@@ -345,15 +293,15 @@ onBeforeUnmount(() => {
             <span class="live-dot"></span>
             <strong>В тренде сегодня</strong>
           </div>
-          <span>Обновлено 12 минут назад</span>
+          <span>{{ homeLoading ? 'Загрузка...' : `Найдено ${filteredReels.length}` }}</span>
         </div>
 
         <div v-if="filteredReels.length" class="reels-grid">
           <article v-for="reel in filteredReels" :key="reel.id" class="reel-card">
-            <button class="poster" type="button" @click="openReel">
-              <img :src="reel.image" :alt="reel.title" />
+            <button class="poster" type="button" @click="openReel(reel.id)">
+              <img :src="reel.thumbnail_url" :alt="reel.title" />
               <span class="poster-shade"></span>
-              <span class="poster-hook">{{ reel.hook }}</span>
+              <span class="poster-hook">{{ reel.overlay_text || reel.title }}</span>
               <span class="duration"><Play :size="10" fill="currentColor" /> {{ reel.duration }}</span>
             </button>
             <div class="reel-meta">
@@ -364,7 +312,7 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <h2>{{ reel.title }}</h2>
-            <button class="remix-button" type="button" @click="openReel">
+            <button class="remix-button" type="button" @click="openReel(reel.id)">
               <WandSparkles :size="15" />
               Remix
             </button>
@@ -373,8 +321,8 @@ onBeforeUnmount(() => {
 
         <div v-else class="empty-state">
           <Search :size="30" />
-          <strong>Ничего не найдено</strong>
-          <span>Попробуйте изменить запрос</span>
+          <strong>{{ homeLoading ? 'Загружаем рилсы...' : 'Ничего не найдено' }}</strong>
+          <span>Попробуйте изменить запрос или загрузить конкурента</span>
         </div>
       </section>
 
@@ -392,47 +340,52 @@ onBeforeUnmount(() => {
             <Camera :size="20" />
             <input v-model="competitorHandle" aria-label="Instagram username" />
           </label>
-          <button class="primary-button" type="button" @click="loadCompetitor">
-            Загрузить
+          <button
+            class="primary-button"
+            type="button"
+            :disabled="competitorLoading"
+            @click="loadCompetitor"
+          >
+            {{ competitorLoading ? 'Загружаем...' : 'Загрузить' }}
             <ArrowUpRight :size="17" />
           </button>
         </div>
 
-        <template v-if="competitorLoaded">
+        <template v-if="competitor">
           <article class="profile-card">
             <div class="profile-main">
-              <img :src="reels[0].image" alt="Alex Carter" />
+              <img :src="competitor.avatar_url" :alt="competitor.full_name || competitor.username" />
               <div>
-                <strong>Alex Carter</strong>
-                <span>@vibecoding_creator</span>
-                <p>Building AI apps. No code, just ideas.<br />Documenting the journey.</p>
+                <strong>{{ competitor.full_name || competitor.username }}</strong>
+                <span>@{{ competitor.username }}</span>
+                <p class="preserve-lines">{{ competitor.bio }}</p>
               </div>
             </div>
             <div class="profile-stats">
-              <span><strong>342</strong><small>публикации</small></span>
-              <span><strong>1.2M</strong><small>подписчики</small></span>
-              <span><strong>102</strong><small>подписки</small></span>
+              <span><strong>{{ competitor.posts_count }}</strong><small>публикации</small></span>
+              <span><strong>{{ formatFollowers(competitor.followers_count) }}</strong><small>подписчики</small></span>
+              <span><strong>{{ competitor.following_count }}</strong><small>подписки</small></span>
             </div>
           </article>
 
           <div class="results-heading">
             <div>
-              <h2>Найдено 20 последних рилсов</h2>
+              <h2>Найдено {{ competitorReels.length }} последних рилсов</h2>
               <p>Отсортировано по вовлечённости</p>
             </div>
-            <span class="success-badge"><Check :size="14" /> Успешно загружено через API</span>
+            <span class="success-badge"><Check :size="14" /> {{ competitorMessage || 'Готово' }}</span>
           </div>
 
           <div class="compact-reels-grid">
             <button
-              v-for="reel in reels"
+              v-for="reel in competitorReels"
               :key="reel.id"
               class="compact-reel"
               type="button"
-              @click="openReel"
+              @click="openReel(reel.id)"
             >
               <span class="compact-poster">
-                <img :src="reel.image" :alt="reel.title" />
+                <img :src="reel.thumbnail_url" :alt="reel.title" />
                 <span class="duration"><Play :size="9" fill="currentColor" /> {{ reel.duration }}</span>
               </span>
               <strong>{{ reel.title }}</strong>
@@ -447,17 +400,22 @@ onBeforeUnmount(() => {
           Назад к списку
         </button>
 
-        <div class="detail-layout">
+        <div v-if="detailLoading || !selectedReel" class="empty-state">
+          <Sparkles :size="30" />
+          <strong>{{ detailLoading ? 'Открываем рилс...' : 'Рилс не выбран' }}</strong>
+        </div>
+
+        <div v-else class="detail-layout">
           <div class="video-column">
             <div class="featured-video">
-              <img :src="reels[0].image" alt="Как я собрал SaaS за 1 вечер с Cursor" />
+              <img :src="selectedReel.thumbnail_url" :alt="selectedReel.title" />
               <span class="poster-shade"></span>
-              <span class="poster-hook">BUILD<br />APPS<br />WITH AI</span>
+              <span class="poster-hook">{{ selectedReel.overlay_text || selectedReel.title }}</span>
               <button type="button" aria-label="Воспроизвести видео">
                 <Play :size="24" fill="currentColor" />
               </button>
               <span class="video-progress"><i></i></span>
-              <span class="video-time">0:00 / 0:28</span>
+              <span class="video-time">0:00 / {{ selectedDurationLabel }}</span>
             </div>
             <div class="video-actions">
               <button class="primary-button wide" type="button">
@@ -474,7 +432,7 @@ onBeforeUnmount(() => {
             <header class="detail-title">
               <div>
                 <span class="eyebrow">Разбор трендового ролика</span>
-                <h1>Как я собрал SaaS за 1 вечер с Cursor</h1>
+                <h1>{{ selectedReel.title }}</h1>
               </div>
               <button class="icon-button" type="button" aria-label="Другие действия">
                 <MoreVertical :size="18" />
@@ -482,12 +440,12 @@ onBeforeUnmount(() => {
             </header>
 
             <div class="creator-row">
-              <span class="creator-avatar">A</span>
+              <span class="creator-avatar">{{ (selectedReel.author_name || selectedReel.author || 'A').slice(0, 1).toUpperCase() }}</span>
               <span>
-                <strong>Alex Carter</strong>
-                <small>@vibecoding_creator</small>
+                <strong>{{ selectedReel.author_name || selectedReel.author }}</strong>
+                <small>{{ selectedReel.author }}</small>
               </span>
-              <span class="creator-meta">0:28 · 1.2M просмотров · 2 недели назад</span>
+              <span class="creator-meta">{{ selectedDurationLabel }} · {{ selectedViewsLabel }} просмотров</span>
               <button class="instagram-button" type="button">
                 <Camera :size="15" />
                 Открыть в Instagram
@@ -516,7 +474,7 @@ onBeforeUnmount(() => {
             <div v-if="detailTab === 'analysis'" class="insight-list">
               <div v-if="saveState === 'saved'" class="save-notice success">
                 <Check :size="15" />
-                Изменения сохранены в базе и обновлены на сайте
+                Изменения сохранены в PostgreSQL
               </div>
               <div v-if="saveError" class="save-notice error">
                 <CircleHelp :size="15" />
@@ -533,7 +491,6 @@ onBeforeUnmount(() => {
                   <button
                     v-if="editingSection !== 'hook'"
                     type="button"
-                    :disabled="analysisLoading"
                     @click="startEditing('hook')"
                   >
                     <Pencil :size="14" /> Редактировать
@@ -563,9 +520,9 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
                 </div>
-                <blockquote v-else>«{{ analysis.hook }}»</blockquote>
+                <blockquote v-else>«{{ selectedReel.hook }}»</blockquote>
                 <span class="counter">
-                  {{ editingSection === 'hook' ? draft.length : analysis.hook.length }}/{{ sectionLimits.hook }}
+                  {{ editingSection === 'hook' ? draft.length : selectedReel.hook.length }}/{{ sectionLimits.hook }}
                 </span>
               </article>
 
@@ -579,7 +536,6 @@ onBeforeUnmount(() => {
                   <button
                     v-if="editingSection !== 'script'"
                     type="button"
-                    :disabled="analysisLoading"
                     @click="startEditing('script')"
                   >
                     <Pencil :size="14" /> Редактировать
@@ -613,7 +569,7 @@ onBeforeUnmount(() => {
                   <li v-for="line in scriptLines" :key="line">{{ line }}</li>
                 </ol>
                 <span class="counter">
-                  {{ editingSection === 'script' ? draft.length : analysis.script.length }}/{{ sectionLimits.script }}
+                  {{ editingSection === 'script' ? draft.length : selectedReel.script.length }}/{{ sectionLimits.script }}
                 </span>
               </article>
 
@@ -627,7 +583,6 @@ onBeforeUnmount(() => {
                   <button
                     v-if="editingSection !== 'cta'"
                     type="button"
-                    :disabled="analysisLoading"
                     @click="startEditing('cta')"
                   >
                     <Pencil :size="14" /> Редактировать
@@ -657,29 +612,21 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
                 </div>
-                <p v-else class="preserve-lines">{{ analysis.cta }}</p>
+                <p v-else class="preserve-lines">{{ selectedReel.cta }}</p>
                 <span class="counter">
-                  {{ editingSection === 'cta' ? draft.length : analysis.cta.length }}/{{ sectionLimits.cta }}
+                  {{ editingSection === 'cta' ? draft.length : selectedReel.cta.length }}/{{ sectionLimits.cta }}
                 </span>
               </article>
 
-              <div class="pro-tip">
+              <div v-if="selectedReel.why_it_works" class="pro-tip">
                 <Lightbulb :size="19" />
-                <span><strong>Почему это работает</strong> Конкретный результат, короткий срок и понятная трансформация создают сильное любопытство.</span>
+                <span><strong>Почему это работает</strong> {{ selectedReel.why_it_works }}</span>
               </div>
             </div>
 
             <div v-else class="transcript-panel">
               <span class="transcript-badge"><Bolt :size="14" /> Автоматическая расшифровка</span>
-              <p>
-                Сегодня покажу, как я собрал полноценное SaaS-приложение всего за один
-                вечер. Я не писал код вручную — вместо этого описал идею в Cursor,
-                получил рабочий прототип и доработал его с помощью AI.
-              </p>
-              <p>
-                В конце покажу результат и дам точный промпт, с которого можно начать
-                собственный проект.
-              </p>
+              <p class="preserve-lines">{{ selectedReel.transcript || selectedReel.caption || 'Расшифровка пока недоступна.' }}</p>
             </div>
           </div>
         </div>

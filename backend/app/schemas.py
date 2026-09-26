@@ -1,0 +1,80 @@
+from datetime import datetime
+from typing import Literal, Optional
+from uuid import UUID
+
+from pydantic import BaseModel, Field
+
+from app.models import CompetitorStatus, ReelStatus
+
+
+class CompetitorRead(BaseModel):
+    id: UUID
+    username: str
+    full_name: Optional[str] = None
+    bio: Optional[str] = None
+    avatar_url: Optional[str] = None
+    posts_count: int
+    followers_count: int
+    following_count: int
+    status: CompetitorStatus
+    last_error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReelListItem(BaseModel):
+    id: UUID
+    competitor_id: UUID
+    title: str
+    author: str
+    duration: str
+    thumbnail_url: Optional[str] = None
+    overlay_text: Optional[str] = None
+    views_count: int
+    status: ReelStatus
+
+
+class ReelDetail(BaseModel):
+    id: UUID
+    competitor_id: UUID
+    title: str
+    caption: Optional[str] = None
+    author: str
+    author_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    duration: str
+    duration_seconds: int
+    views_count: int
+    thumbnail_url: Optional[str] = None
+    video_url: Optional[str] = None
+    overlay_text: Optional[str] = None
+    hook: str
+    script: str
+    cta: str
+    transcript: Optional[str] = None
+    why_it_works: Optional[str] = None
+    posted_at: Optional[datetime] = None
+    status: ReelStatus
+    updated_at: datetime
+
+
+class CompetitorLoadRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=100)
+
+
+class CompetitorLoadResponse(BaseModel):
+    competitor: CompetitorRead
+    reels: list[ReelListItem]
+    source: Literal["seed", "apify"]
+    message: str
+
+
+class ReelUpdateRequest(BaseModel):
+    section: Literal["hook", "script", "cta"]
+    value: str = Field(min_length=1, max_length=2000)
+
+
+class HealthResponse(BaseModel):
+    status: str
+    database: str
+    apify_configured: bool
