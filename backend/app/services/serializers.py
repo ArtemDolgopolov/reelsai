@@ -30,8 +30,8 @@ def analysis_sections(reel: Reel) -> tuple[str, str, str]:
     spoken = (reel.transcript or "").strip()
     caption = (reel.caption or reel.title or "").strip()
     if looks_like_real_transcript(spoken):
-        # Upgrade legacy rows where the whole transcript was dumped into script.
         stored_script = (reel.script or "").strip()
+        # Re-split legacy rows where the whole transcript was dumped into script.
         if not stored_script or stored_script == spoken:
             return split_transcript_into_sections(spoken, caption)
     hook = (reel.hook or "").strip()
