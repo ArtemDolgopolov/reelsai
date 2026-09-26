@@ -82,7 +82,7 @@ class ApifyClient:
         actor_id = self.settings.apify_actor_id.replace("/", "~")
         # Actor sometimes returns tagged/collaborator reels mixed in. Fetch extra,
         # then keep only items owned by the requested username.
-        fetch_limit = max(limit * 3, 40)
+        fetch_limit = max(limit * 5, 100)
         payload = {
             "username": [username],
             "resultsLimit": fetch_limit,
