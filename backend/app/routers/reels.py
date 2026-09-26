@@ -1,14 +1,14 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import text
-from sqlmodel import Session, col, select
+from sqlmodel import Session
 
 from app.config import get_settings
 from app.db import get_session
 from app.models import Competitor, Reel
 from app.schemas import ReelDetail, ReelListItem, ReelUpdateRequest
-from app.services.serializers import reel_to_detail, reel_to_list_item
+from app.services.discovery import fetch_home_discover_reels
+from app.services.serializers import reel_to_detail
 
 router = APIRouter(prefix="/reels", tags=["reels"])
 
@@ -17,7 +17,6 @@ SECTION_LIMITS = {
     "script": 2000,
     "cta": 500,
 }
-SEED_USERNAME = "vibecoding_creator"
 
 
 def require_editor(request: Request) -> None:
@@ -39,44 +38,8 @@ def list_reels(
     q: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> list[ReelListItem]:
-    """Home feed: 20 completely random reels from loaded competitors."""
-    rows = session.execute(
-        text(
-            """
-            SELECT r.id
-            FROM reels r
-            JOIN competitors c ON c.id = r.competitor_id
-            WHERE c.username <> :seed_username
-            ORDER BY RANDOM()
-            LIMIT :limit
-            """
-        ),
-        {
-            "seed_username": SEED_USERNAME,
-            "limit": limit,
-        },
-    ).all()
-
-    ordered_ids = [row[0] for row in rows]
-    if not ordered_ids:
-        statement = (
-            select(Reel, Competitor)
-            .where(Reel.competitor_id == Competitor.id)
-            .order_by(text("RANDOM()"))
-            .limit(limit)
-        )
-        fallback = session.exec(statement).all()
-        items = [reel_to_list_item(reel, competitor.username) for reel, competitor in fallback]
-    else:
-        by_id: dict[UUID, ReelListItem] = {}
-        statement = (
-            select(Reel, Competitor)
-            .where(Reel.competitor_id == Competitor.id)
-            .where(col(Reel.id).in_(ordered_ids))
-        )
-        for reel, competitor in session.exec(statement).all():
-            by_id[reel.id] = reel_to_list_item(reel, competitor.username)
-        items = [by_id[reel_id] for reel_id in ordered_ids if reel_id in by_id]
+    """Home feed: absolute-random public Instagram reels (live discovery)."""
+    items = fetch_home_discover_reels(session, limit=limit)
 
     query = (q or "").strip().lower()
     if not query:

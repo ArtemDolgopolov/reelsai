@@ -337,7 +337,7 @@ onBeforeUnmount(() => {
           <div>
             <span class="eyebrow">Вдохновение на каждый день</span>
             <h1>Главное</h1>
-            <p>20 случайных рилсов из загруженных конкурентов.</p>
+            <p>20 случайных рилсов прямо из Instagram — не только из ваших конкурентов.</p>
           </div>
           <label class="search-field">
             <Search :size="17" />

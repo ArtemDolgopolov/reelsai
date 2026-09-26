@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 import subprocess
 import tempfile
@@ -48,6 +49,9 @@ class FreeReelPayload:
     shares_count: int
     overlay_text: str | None
     posted_at: datetime | None
+    author_username: str | None = None
+    author_full_name: str | None = None
+    author_avatar_url: str | None = None
 
 
 @dataclass
@@ -230,6 +234,61 @@ def _fetch_clips(client: httpx.Client, user_id: str, count: int = 20) -> list[di
     return nodes
 
 
+def _fetch_tag_reels(client: httpx.Client, tag: str, count: int = 12) -> list[FreeReelPayload]:
+    """Best-effort public hashtag sections → reel payloads."""
+    tag = tag.lstrip("#").lower()
+    response = client.get(
+        f"https://www.instagram.com/api/v1/tags/{tag}/sections/",
+        params={"tab": "recent", "next_media_ids[]": "[]"},
+    )
+    if response.status_code != 200:
+        # Older shape still appears for some tags.
+        response = client.get(f"https://www.instagram.com/explore/tags/{tag}/", params={"__a": 1, "__d": "dis"})
+        if response.status_code != 200:
+            logger.info("tag sections HTTP %s for #%s", response.status_code, tag)
+            return []
+
+    try:
+        payload = response.json()
+    except Exception:  # noqa: BLE001
+        return []
+
+    nodes: list[dict[str, Any]] = []
+    for section in payload.get("sections") or []:
+        layout = (section.get("layout_content") or {}) if isinstance(section, dict) else {}
+        for medium in layout.get("medias") or []:
+            media = medium.get("media") if isinstance(medium, dict) else None
+            if isinstance(media, dict):
+                nodes.append(media)
+        for item in layout.get("fill_items") or []:
+            media = item.get("media") if isinstance(item, dict) else None
+            if isinstance(media, dict):
+                nodes.append(media)
+
+    # Graph-style fallback
+    if not nodes:
+        edges = (
+            ((payload.get("graphql") or {}).get("hashtag") or {})
+            .get("edge_hashtag_to_media", {})
+            .get("edges")
+            or []
+        )
+        for edge in edges:
+            node = edge.get("node") if isinstance(edge, dict) else None
+            if isinstance(node, dict):
+                nodes.append(node)
+
+    reels: list[FreeReelPayload] = []
+    random.shuffle(nodes)
+    for node in nodes:
+        item = _payload_from_node(node)
+        if item:
+            reels.append(item)
+        if len(reels) >= count:
+            break
+    return reels
+
+
 def _nodes_from_profile(user: dict[str, Any], limit: int) -> list[dict[str, Any]]:
     edges = user.get("edge_owner_to_timeline_media", {}).get("edges") or []
     nodes: list[dict[str, Any]] = []
@@ -304,6 +363,11 @@ def _payload_from_node(node: dict[str, Any]) -> FreeReelPayload | None:
                 image = nested[0]["url"]
                 break
 
+    owner = node.get("user") or node.get("owner") or {}
+    author_username = None
+    if isinstance(owner, dict):
+        author_username = (owner.get("username") or "").lstrip("@").lower() or None
+
     return FreeReelPayload(
         external_id=shortcode,
         title=title,
@@ -319,6 +383,13 @@ def _payload_from_node(node: dict[str, Any]) -> FreeReelPayload | None:
         shares_count=0,
         overlay_text=None,
         posted_at=_parse_timestamp(taken),
+        author_username=author_username,
+        author_full_name=(owner.get("full_name") if isinstance(owner, dict) else None),
+        author_avatar_url=(
+            (owner.get("profile_pic_url") or owner.get("profile_pic_url_hd"))
+            if isinstance(owner, dict)
+            else None
+        ),
     )
 
 
@@ -560,6 +631,8 @@ class InstagramFreeClient:
                 for node in nodes:
                     payload = _payload_from_node(node)
                     if payload:
+                        if not payload.author_username:
+                            payload.author_username = username
                         reels.append(payload)
                     if len(reels) >= limit:
                         break
@@ -601,6 +674,82 @@ class InstagramFreeClient:
                 client.close()
 
         raise InstagramFreeError(f"Не удалось загрузить @{username}: {last_error}")
+
+    def fetch_account_reels_light(self, username: str, limit: int = 8) -> list[FreeReelPayload]:
+        """Fast discovery path: user feed only (skip profile/clips extras)."""
+        username = username.lstrip("@").lower()
+        client = _prime_guest_client(username)
+        try:
+            feed_items, feed_user = _fetch_user_feed(client, username, count=max(limit, 8))
+            reels: list[FreeReelPayload] = []
+            for node in feed_items:
+                payload = _payload_from_node(node)
+                if not payload:
+                    continue
+                payload.author_username = username
+                if isinstance(feed_user, dict):
+                    payload.author_full_name = feed_user.get("full_name") or payload.author_full_name
+                    payload.author_avatar_url = (
+                        feed_user.get("profile_pic_url") or payload.author_avatar_url
+                    )
+                reels.append(payload)
+                if len(reels) >= limit:
+                    break
+            return reels
+        finally:
+            client.close()
+
+    def fetch_discover_reels(self, limit: int = 20) -> list[FreeReelPayload]:
+        """Pull a fresh random mix of public reels from Instagram (not user history)."""
+        from app.services.discovery_pool import DISCOVERY_ACCOUNTS, DISCOVERY_TAGS
+
+        wanted = max(limit, 20)
+        account_sample = random.sample(
+            DISCOVERY_ACCOUNTS,
+            k=min(7, len(DISCOVERY_ACCOUNTS)),
+        )
+        tag_sample = random.sample(DISCOVERY_TAGS, k=min(3, len(DISCOVERY_TAGS)))
+        collected: list[FreeReelPayload] = []
+        seen: set[str] = set()
+
+        for username in account_sample:
+            if len(collected) >= wanted:
+                break
+            try:
+                pool = self.fetch_account_reels_light(username, limit=8)
+            except Exception as exc:  # noqa: BLE001
+                logger.info("Discover skip @%s: %s", username, exc)
+                continue
+            random.shuffle(pool)
+            for reel in pool[:4]:
+                if not reel.external_id or reel.external_id in seen:
+                    continue
+                seen.add(reel.external_id)
+                collected.append(reel)
+                if len(collected) >= wanted:
+                    break
+
+        if len(collected) < wanted:
+            client = _prime_guest_client()
+            try:
+                for tag in tag_sample:
+                    if len(collected) >= wanted:
+                        break
+                    try:
+                        for reel in _fetch_tag_reels(client, tag, count=8):
+                            if not reel.external_id or reel.external_id in seen:
+                                continue
+                            seen.add(reel.external_id)
+                            collected.append(reel)
+                            if len(collected) >= wanted:
+                                break
+                    except Exception as exc:  # noqa: BLE001
+                        logger.info("Discover tag #%s failed: %s", tag, exc)
+            finally:
+                client.close()
+
+        random.shuffle(collected)
+        return collected[:wanted]
 
     def refresh_transcripts(
         self,
