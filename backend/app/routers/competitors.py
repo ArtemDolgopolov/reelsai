@@ -152,12 +152,26 @@ def _background_transcribe(competitor_id: UUID) -> None:
 
 
 def backfill_missing_transcripts() -> None:
-    """Queue speech STT across every competitor that still lacks transcripts."""
+    """Refresh CDN media URLs, then STT across every competitor with missing speech."""
+    client = InstagramFreeClient()
     with Session(engine) as session:
         competitors = list(session.exec(select(Competitor)).all())
+
     for competitor in competitors:
         if competitor.username == "vibecoding_creator":
             continue
+        # Refresh feed metadata so video_url CDN links are fresh before STT.
+        try:
+            data = client.fetch_competitor_metadata(competitor.username, limit=20)
+            with Session(engine) as session:
+                row = session.get(Competitor, competitor.id)
+                if row is None:
+                    continue
+                for item in data.reels:
+                    apply_reel_payload(session, row, item)
+                session.commit()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Metadata refresh before STT failed for @%s: %s", competitor.username, exc)
         _background_transcribe(competitor.id)
 
 

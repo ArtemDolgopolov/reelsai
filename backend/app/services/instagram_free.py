@@ -402,15 +402,21 @@ def enrich_reel_from_url(
 ) -> FreeReelPayload:
     webpage = _normalize_reel_url(url)
     info: dict[str, Any] = {}
-    try:
-        info = _ytdlp_json(webpage)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("yt-dlp metadata failed for %s: %s", webpage, exc)
-        if existing is None:
-            raise InstagramFreeError(str(exc)) from exc
+    # Prefer already-known feed metadata + CDN URL. Avoid yt-dlp unless we have nothing else —
+    # Instagram heavily rate-limits datacenter IPs on single-reel downloads.
+    if existing is None or not (existing.video_url or existing.caption or existing.views_count):
+        try:
+            info = _ytdlp_json(webpage)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("yt-dlp metadata failed for %s: %s", webpage, exc)
+            if existing is None:
+                raise InstagramFreeError(str(exc)) from exc
 
     shortcode = str(
-        info.get("id") or info.get("display_id") or (existing.external_id if existing else "") or ""
+        info.get("id")
+        or info.get("display_id")
+        or (existing.external_id if existing else "")
+        or ""
     )
     caption = info.get("description") or (existing.caption if existing else None)
     title = (
