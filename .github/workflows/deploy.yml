@@ -1,0 +1,53 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - reelsai
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Sync deployment directory
+        run: |
+          sudo mkdir -p /opt/reelsai
+          sudo rsync -a --delete --exclude .git ./ /opt/reelsai/
+          sudo chown -R "$USER":"$USER" /opt/reelsai
+
+      - name: Build and start application
+        working-directory: /opt/reelsai
+        run: docker compose up --detach --build --remove-orphans
+
+      - name: Verify deployment
+        run: |
+          for attempt in {1..12}; do
+            if curl --fail --silent --show-error http://127.0.0.1/ | grep --quiet "Reels Finder"; then
+              exit 0
+            fi
+            sleep 5
+          done
+          docker compose --project-directory /opt/reelsai logs
+          exit 1
+
+      - name: Remove unused Docker images
+        if: success()
+        run: docker image prune --force

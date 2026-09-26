@@ -1,0 +1,16 @@
+---
+description: Local-first development, GitHub synchronization, and production verification workflow
+alwaysApply: true
+---
+
+# Development workflow
+
+- Treat the local repository as the source workspace. Write and review code locally.
+- Run relevant local checks before publishing changes.
+- Keep `main` deployable. Commit verified changes and push them to GitHub.
+- Production deploys automatically from `main` through the repository GitHub Actions workflow.
+- Never edit application source directly on the server.
+- After every deployment, verify both the GitHub Actions result and the live application.
+- Run the application on the server through Docker Compose and Caddy.
+- Keep secrets and private SSH keys out of Git and application files.
+- Do not weaken SSH restrictions or expose administrative ports for deployment.
