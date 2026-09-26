@@ -18,6 +18,7 @@ class CompetitorRead(BaseModel):
     following_count: int
     status: CompetitorStatus
     last_error: Optional[str] = None
+    last_scraped_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -31,6 +32,8 @@ class ReelListItem(BaseModel):
     thumbnail_url: Optional[str] = None
     overlay_text: Optional[str] = None
     views_count: int
+    likes_count: int
+    comments_count: int
     status: ReelStatus
 
 
@@ -45,6 +48,10 @@ class ReelDetail(BaseModel):
     duration: str
     duration_seconds: int
     views_count: int
+    likes_count: int
+    comments_count: int
+    shares_count: int
+    instagram_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
     video_url: Optional[str] = None
     overlay_text: Optional[str] = None
@@ -60,12 +67,13 @@ class ReelDetail(BaseModel):
 
 class CompetitorLoadRequest(BaseModel):
     username: str = Field(min_length=1, max_length=100)
+    force_refresh: bool = False
 
 
 class CompetitorLoadResponse(BaseModel):
     competitor: CompetitorRead
     reels: list[ReelListItem]
-    source: Literal["seed", "apify"]
+    source: Literal["seed", "apify", "cache"]
     message: str
 
 

@@ -8,9 +8,12 @@ import {
   Check,
   ChevronRight,
   CircleHelp,
+  Eye,
   FileText,
+  Heart,
   Home,
   Lightbulb,
+  MessageCircle,
   MoreVertical,
   Pencil,
   Play,
@@ -122,7 +125,27 @@ async function openReel(reelId) {
   }
 }
 
-async function loadCompetitor() {
+async function loadInitialCompetitor() {
+  try {
+    const response = await fetch('/api/competitors', { cache: 'no-store' })
+    if (!response.ok) return
+    const competitors = await response.json()
+    if (!competitors.length) return
+
+    competitor.value = competitors[0]
+    competitorHandle.value = `@${competitors[0].username}`
+    const reelsResponse = await fetch(
+      `/api/competitors/${competitors[0].id}/reels`,
+      { cache: 'no-store' },
+    )
+    if (reelsResponse.ok) competitorReels.value = await reelsResponse.json()
+    competitorMessage.value = 'Загружено из PostgreSQL'
+  } catch {
+    // The main feed still remains usable if the optional profile request fails.
+  }
+}
+
+async function loadCompetitor(forceRefresh = false) {
   competitorLoading.value = true
   competitorMessage.value = ''
   saveError.value = ''
@@ -131,7 +154,10 @@ async function loadCompetitor() {
     const response = await fetch('/api/competitors/load', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: competitorHandle.value }),
+      body: JSON.stringify({
+        username: competitorHandle.value,
+        force_refresh: forceRefresh,
+      }),
     })
     const body = await response.json()
     if (!response.ok) {
@@ -211,8 +237,7 @@ function syncPageFromHash() {
 
 onMounted(async () => {
   window.addEventListener('hashchange', syncPageFromHash)
-  await loadHomeReels()
-  await loadCompetitor()
+  await Promise.all([loadHomeReels(), loadInitialCompetitor()])
 })
 
 onBeforeUnmount(() => {
@@ -312,6 +337,11 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <h2>{{ reel.title }}</h2>
+            <div class="engagement-row">
+              <span><Eye :size="13" /> {{ formatViews(reel.views_count) }}</span>
+              <span><Heart :size="13" /> {{ formatViews(reel.likes_count) }}</span>
+              <span><MessageCircle :size="13" /> {{ formatViews(reel.comments_count) }}</span>
+            </div>
             <button class="remix-button" type="button" @click="openReel(reel.id)">
               <WandSparkles :size="15" />
               Remix
@@ -344,7 +374,7 @@ onBeforeUnmount(() => {
             class="primary-button"
             type="button"
             :disabled="competitorLoading"
-            @click="loadCompetitor"
+            @click="loadCompetitor(false)"
           >
             {{ competitorLoading ? 'Загружаем...' : 'Загрузить' }}
             <ArrowUpRight :size="17" />
@@ -445,12 +475,22 @@ onBeforeUnmount(() => {
                 <strong>{{ selectedReel.author_name || selectedReel.author }}</strong>
                 <small>{{ selectedReel.author }}</small>
               </span>
-              <span class="creator-meta">{{ selectedDurationLabel }} · {{ selectedViewsLabel }} просмотров</span>
-              <button class="instagram-button" type="button">
+              <span class="creator-meta">
+                {{ selectedDurationLabel }} · {{ selectedViewsLabel }} просмотров ·
+                {{ formatViews(selectedReel.likes_count) }} лайков ·
+                {{ formatViews(selectedReel.comments_count) }} комментариев
+              </span>
+              <a
+                v-if="selectedReel.instagram_url"
+                class="instagram-button"
+                :href="selectedReel.instagram_url"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
                 <Camera :size="15" />
                 Открыть в Instagram
                 <ArrowUpRight :size="14" />
-              </button>
+              </a>
             </div>
 
             <div class="detail-tabs" role="tablist">

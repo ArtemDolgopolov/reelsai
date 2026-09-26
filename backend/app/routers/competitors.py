@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,6 +13,7 @@ from app.services.seed import ensure_seed_data
 from app.services.serializers import competitor_to_read, reel_to_list_item
 
 router = APIRouter(prefix="/competitors", tags=["competitors"])
+CACHE_TTL = timedelta(hours=6)
 
 
 def normalize_username(raw: str) -> str:
@@ -20,6 +22,17 @@ def normalize_username(raw: str) -> str:
         value = value.rstrip("/").split("instagram.com/")[-1]
         value = value.split("?")[0].split("/")[0]
     return value.lstrip("@").lower()
+
+
+def get_latest_reels(session: Session, competitor_id: UUID) -> list[Reel]:
+    return list(
+        session.exec(
+            select(Reel)
+            .where(Reel.competitor_id == competitor_id)
+            .order_by(col(Reel.posted_at).desc().nulls_last())
+            .limit(20)
+        ).all()
+    )
 
 
 @router.get("", response_model=list[CompetitorRead])
@@ -45,11 +58,7 @@ def list_competitor_reels(
     if competitor is None:
         raise HTTPException(status_code=404, detail="Competitor not found")
 
-    reels = session.exec(
-        select(Reel)
-        .where(Reel.competitor_id == competitor_id)
-        .order_by(col(Reel.views_count).desc())
-    ).all()
+    reels = get_latest_reels(session, competitor_id)
     return [reel_to_list_item(reel, competitor.username) for reel in reels]
 
 
@@ -66,6 +75,27 @@ async def load_competitor(
     client = ApifyClient(settings)
 
     if client.configured:
+        existing_competitor = session.exec(
+            select(Competitor).where(Competitor.username == username)
+        ).first()
+        if (
+            existing_competitor is not None
+            and existing_competitor.last_scraped_at is not None
+            and not payload.force_refresh
+            and datetime.now(timezone.utc) - existing_competitor.last_scraped_at
+            < CACHE_TTL
+        ):
+            cached_reels = get_latest_reels(session, existing_competitor.id)
+            return CompetitorLoadResponse(
+                competitor=competitor_to_read(existing_competitor),
+                reels=[
+                    reel_to_list_item(reel, existing_competitor.username)
+                    for reel in cached_reels
+                ],
+                source="cache",
+                message="Загружено из PostgreSQL-кэша без расхода Apify-кредитов",
+            )
+
         try:
             data = await client.fetch_competitor(username, limit=20)
         except ApifyNotConfiguredError as exc:
@@ -73,21 +103,23 @@ async def load_competitor(
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Apify request failed: {exc}") from exc
 
-        competitor = session.exec(
+        competitor = existing_competitor or session.exec(
             select(Competitor).where(Competitor.username == data.username.lower())
         ).first()
         if competitor is None:
             competitor = Competitor(username=data.username.lower())
 
-        competitor.full_name = data.full_name
-        competitor.bio = data.bio
-        competitor.avatar_url = data.avatar_url
-        competitor.posts_count = data.posts_count
-        competitor.followers_count = data.followers_count
-        competitor.following_count = data.following_count
+        competitor.username = data.username.lower()
+        competitor.full_name = data.full_name or competitor.full_name
+        competitor.bio = data.bio or competitor.bio
+        competitor.avatar_url = data.avatar_url or competitor.avatar_url
+        competitor.posts_count = data.posts_count or competitor.posts_count
+        competitor.followers_count = data.followers_count or competitor.followers_count
+        competitor.following_count = data.following_count or competitor.following_count
         competitor.status = CompetitorStatus.ready
         competitor.last_error = None
         competitor.apify_run_id = data.run_id
+        competitor.last_scraped_at = datetime.now(timezone.utc)
         session.add(competitor)
         session.commit()
         session.refresh(competitor)
@@ -102,11 +134,17 @@ async def load_competitor(
             reel.competitor_id = competitor.id
             reel.title = item.title
             reel.caption = item.caption
+            reel.transcript = item.transcript
+            reel.instagram_url = item.instagram_url
             reel.thumbnail_url = item.thumbnail_url
             reel.video_url = item.video_url
             reel.duration_seconds = item.duration_seconds
             reel.views_count = item.views_count
+            reel.likes_count = item.likes_count
+            reel.comments_count = item.comments_count
+            reel.shares_count = item.shares_count
             reel.overlay_text = item.overlay_text
+            reel.posted_at = item.posted_at
             reel.status = ReelStatus.ready
             if not reel.hook:
                 reel.hook = (item.caption or item.title or "")[:200]
@@ -117,11 +155,7 @@ async def load_competitor(
             session.add(reel)
 
         session.commit()
-        reels = session.exec(
-            select(Reel)
-            .where(Reel.competitor_id == competitor.id)
-            .order_by(col(Reel.views_count).desc())
-        ).all()
+        reels = get_latest_reels(session, competitor.id)
         return CompetitorLoadResponse(
             competitor=competitor_to_read(competitor),
             reels=[reel_to_list_item(reel, competitor.username) for reel in reels],

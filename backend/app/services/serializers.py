@@ -33,6 +33,8 @@ def reel_to_list_item(reel: Reel, username: str) -> ReelListItem:
         thumbnail_url=reel.thumbnail_url,
         overlay_text=reel.overlay_text,
         views_count=reel.views_count,
+        likes_count=reel.likes_count,
+        comments_count=reel.comments_count,
         status=reel.status,
     )
 
@@ -49,6 +51,10 @@ def reel_to_detail(reel: Reel, competitor: Competitor) -> ReelDetail:
         duration=format_duration(reel.duration_seconds),
         duration_seconds=reel.duration_seconds,
         views_count=reel.views_count,
+        likes_count=reel.likes_count,
+        comments_count=reel.comments_count,
+        shares_count=reel.shares_count,
+        instagram_url=reel.instagram_url,
         thumbnail_url=reel.thumbnail_url,
         video_url=reel.video_url,
         overlay_text=reel.overlay_text,
