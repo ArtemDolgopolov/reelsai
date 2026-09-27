@@ -14,15 +14,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
-    && python - <<'PY'
-from faster_whisper import WhisperModel
-import os
-model = os.getenv("WHISPER_MODEL", "small")
-print(f"Warming faster-whisper model={model}")
-WhisperModel(model, device="cpu", compute_type="int8")
-print("faster-whisper warm-up done")
-PY
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY alembic.ini .
 COPY alembic ./alembic
