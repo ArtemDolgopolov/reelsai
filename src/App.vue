@@ -61,8 +61,15 @@ const sectionLimits = {
 const scriptLines = computed(() =>
   (selectedReel.value?.script || '')
     .split(/\r?\n/)
-    .filter((line) => line.trim()),
+    .map((line) => line.trim())
+    .filter(Boolean),
 )
+
+const scriptBody = computed(() => {
+  const raw = selectedReel.value?.script || ''
+  const joined = scriptLines.value.length > 1 ? scriptLines.value.join(' ') : raw
+  return joined.replace(/\s+/g, ' ').trim()
+})
 
 const overviewParagraphs = computed(() =>
   (selectedReel.value?.overview || '')
@@ -763,12 +770,10 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
                 </div>
-                <ol v-else-if="scriptLines.length">
-                  <li v-for="line in scriptLines" :key="line">{{ line }}</li>
-                </ol>
+                <p v-if="scriptBody" class="script-prose">{{ scriptBody }}</p>
                 <p v-else class="preserve-lines">Добавь скрипт вручную</p>
                 <span class="counter">
-                  {{ editingSection === 'script' ? draft.length : (selectedReel.script || '').length }}/{{ sectionLimits.script }}
+                  {{ editingSection === 'script' ? draft.length : scriptBody.length }}/{{ sectionLimits.script }}
                 </span>
               </article>
 

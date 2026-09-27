@@ -4,7 +4,7 @@ from app.models import Competitor, Reel
 from app.schemas import CompetitorRead, ReelDetail, ReelListItem
 from app.services.instagram_free import looks_like_real_transcript
 from app.services.overview import build_reel_overview
-from app.services.transcript_sections import DEFAULT_CTA, split_transcript_into_sections
+from app.services.transcript_sections import DEFAULT_CTA, continuous_text, split_transcript_into_sections
 
 
 def format_duration(seconds: int) -> str:
@@ -28,24 +28,30 @@ def competitor_to_read(competitor: Competitor) -> CompetitorRead:
 
 def analysis_sections(reel: Reel) -> tuple[str, str, str]:
     """Hook / Script / CTA: prefer spoken audio, otherwise caption-based drafts."""
-    spoken = (reel.transcript or "").strip()
-    caption = (reel.caption or reel.title or "").strip()
+    spoken = continuous_text(reel.transcript)
+    caption = continuous_text(reel.caption or reel.title)
 
     if looks_like_real_transcript(spoken):
-        stored_script = (reel.script or "").strip()
-        if not stored_script or stored_script == spoken:
+        stored_script = continuous_text(reel.script)
+        # Re-structure legacy dumps / broken numbered scripts.
+        if (
+            not stored_script
+            or stored_script == spoken
+            or "\n" in (reel.script or "")
+            or len(stored_script) > len(spoken) * 0.98
+        ):
             return split_transcript_into_sections(spoken, caption)
         return (
-            (reel.hook or "").strip(),
-            stored_script,
-            (reel.cta or "").strip() or split_transcript_into_sections(spoken, caption)[2],
+            continuous_text(reel.hook)[:200],
+            stored_script[:2000],
+            continuous_text(reel.cta)[:500] or split_transcript_into_sections(spoken, caption)[2],
         )
 
-    stored_hook = (reel.hook or "").strip()
-    stored_script = (reel.script or "").strip()
-    stored_cta = (reel.cta or "").strip()
+    stored_hook = continuous_text(reel.hook)
+    stored_script = continuous_text(reel.script)
+    stored_cta = continuous_text(reel.cta)
     if stored_hook and stored_script:
-        return stored_hook, stored_script, stored_cta or DEFAULT_CTA
+        return stored_hook[:200], stored_script[:2000], stored_cta[:500] or DEFAULT_CTA
 
     return split_transcript_into_sections(None, caption)
 

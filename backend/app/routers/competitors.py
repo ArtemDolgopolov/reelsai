@@ -66,8 +66,9 @@ def apply_reel_payload(session: Session, competitor: Competitor, item: FreeReelP
     reel.status = ReelStatus.ready
 
     spoken = (item.transcript or reel.transcript or "").strip()
+    caption = (item.caption or reel.caption or item.title or reel.title or "").strip()
     if spoken and looks_like_real_transcript(spoken):
-        hook, script, cta = split_transcript_into_sections(spoken)
+        hook, script, cta = split_transcript_into_sections(spoken, caption)
         reel.hook = hook
         reel.script = script
         reel.cta = cta

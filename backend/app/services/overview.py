@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from app.models import Competitor, Reel
+from app.services.groq_llm import explain_reel_in_russian
 from app.services.instagram_free import looks_like_real_transcript
 
 
@@ -21,7 +22,7 @@ def _clip(text: str, limit: int = 280) -> str:
 
 
 def build_reel_overview(reel: Reel, competitor: Competitor, *, views_label: str, duration_label: str) -> str:
-    """Conversational summary shown above Hook / Script / CTA."""
+    """Conversational explanation of what happens in the reel (not a transcript dump)."""
     author = competitor.full_name or f"@{competitor.username}"
     handle = f"@{competitor.username}"
     spoken = _clean(reel.transcript)
@@ -29,34 +30,40 @@ def build_reel_overview(reel: Reel, competitor: Competitor, *, views_label: str,
     title = _clean(reel.title)
     has_speech = looks_like_real_transcript(spoken)
 
-    topic = ""
-    if has_speech:
-        topic = _clip(spoken, 320)
-    elif caption and caption.lower() not in {title.lower(), "instagram reel"}:
-        topic = _clip(caption, 280)
-    elif title and title.lower() != "instagram reel":
-        topic = _clip(title, 220)
+    llm_overview = explain_reel_in_russian(
+        author=author,
+        handle=handle,
+        duration_label=duration_label,
+        views_label=views_label,
+        transcript=spoken if has_speech else None,
+        caption=caption or None,
+        title=title or None,
+    )
+    if llm_overview:
+        header = (
+            f"Разбираю рилс {author} ({handle}). "
+            f"Длительность {duration_label}, охват около {views_label} просмотров."
+        )
+        return f"{header}\n\n{llm_overview.strip()}"
 
+    # Offline fallback — still explain, do not paste raw speech.
     parts: list[str] = [
         f"Разбираю рилс {author} ({handle}). Длительность {duration_label}, охват около {views_label} просмотров."
     ]
-
     if has_speech:
-        parts.append(f"По речи автора ролик roughly про это:\n\n«{topic}»")
         parts.append(
-            "Ниже разложил материал на Hook, Script и Call to Action — можно копировать в свой рилс или править."
+            "По речи автора это практичный ролик с конкретным инструментом или приёмом. "
+            "Ниже собрал Hook, Script и Call to Action для ремикса — без дословной простыни расшифровки."
         )
-    elif topic:
-        parts.append(f"По описанию и контексту ролик про это:\n\n«{topic}»")
-        parts.append(
-            "Пока собрал стартовые Hook / Script / CTA по тексту ролика. "
-            "Если распознаем речь — блоки обновятся точнее. Их уже можно копировать и редактировать."
-        )
+    elif caption and caption.lower() not in {title.lower(), "instagram reel"}:
+        parts.append(f"По описанию тема ролика roughly: {_clip(caption, 220)}.")
+        parts.append("Ниже — стартовые Hook / Script / CTA, их можно копировать и править.")
+    elif title and title.lower() != "instagram reel":
+        parts.append(f"Судя по заголовку, ролик про: {_clip(title, 180)}.")
+        parts.append("Hook / Script / CTA ниже можно сразу копировать или отредактировать.")
     else:
         parts.append(
-            "Текстового контекста мало, поэтому ниже — рабочие заготовки Hook / Script / CTA. "
-            "Отредактируй под свой формат или дождись уточнения по речи."
+            "Пока мало контекста. Ниже — рабочие заготовки Hook / Script / CTA, которые можно править вручную."
         )
 
-    # Keep the overview in Russian; avoid the accidental English word above.
-    return "\n\n".join(parts).replace("roughly про", "в целом про")
+    return "\n\n".join(parts).replace("roughly:", "примерно:")

@@ -1416,6 +1416,10 @@ img {
   line-height: 1.55;
 }
 
+.script-prose {
+  white-space: normal !important;
+}
+
 .insight-card blockquote {
   padding: 10px 12px;
   font-weight: 650;
