@@ -104,6 +104,8 @@ def reel_to_detail(
             analysis_pending = False
 
     spoken = (reel.transcript or "").strip()
+    # None = STT not attempted yet; "" = attempted, no speech; text = ready.
+    speech_pending = reel.transcript is None
     return ReelDetail(
         id=reel.id,
         competitor_id=reel.competitor_id,
@@ -127,7 +129,7 @@ def reel_to_detail(
         script=continuous_text(script),
         cta=continuous_text(cta) or DEFAULT_CTA,
         transcript=reel.transcript,
-        speech_pending=not looks_like_real_transcript(spoken),
+        speech_pending=speech_pending,
         analysis_pending=analysis_pending,
         why_it_works=reel.why_it_works,
         posted_at=reel.posted_at,

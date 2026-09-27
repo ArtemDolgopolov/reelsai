@@ -114,11 +114,26 @@ def ensure_reel_transcript(session: Session, reel: Reel, competitor: Competitor 
         )
         if not url and not video_url:
             logger.warning("No media URL for STT on reel %s", reel.external_id or reel.id)
+            if reel.transcript is None:
+                reel.transcript = ""
+                session.add(reel)
+                session.commit()
             return reel
 
         updated = enrich_reel_from_url(url or "https://www.instagram.com/", transcribe=True, existing=payload)
         if not looks_like_real_transcript(updated.transcript):
             logger.warning("STT produced no speech for reel %s", reel.external_id or reel.id)
+            # Empty string = attempted, no usable speech (None = not tried yet).
+            if reel.transcript is None:
+                reel.transcript = ""
+                session.add(reel)
+                session.commit()
+            try:
+                from app.services.overview import schedule_analysis
+
+                schedule_analysis(reel.id)
+            except Exception as enrich_exc:  # noqa: BLE001
+                logger.warning("Could not schedule analysis after empty STT: %s", enrich_exc)
             return reel
 
         apply_reel_payload(session, competitor, updated)
@@ -140,6 +155,14 @@ def ensure_reel_transcript(session: Session, reel: Reel, competitor: Competitor 
         logger.warning("ensure_reel_transcript failed for %s: %s", reel.id, exc)
         try:
             session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            session.refresh(reel)
+            if reel.transcript is None:
+                reel.transcript = ""
+                session.add(reel)
+                session.commit()
         except Exception:  # noqa: BLE001
             pass
         return reel

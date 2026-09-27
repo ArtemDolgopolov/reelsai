@@ -89,10 +89,37 @@ const overviewParagraphs = computed(() =>
     .filter(Boolean),
 )
 
+const isOverviewStub = computed(() => {
+  const text = (selectedReel.value?.overview || '').toLowerCase()
+  return (
+    text.includes('собираю объяснение') ||
+    text.includes('через пару секунд') ||
+    text.includes('собираю разбор')
+  )
+})
+
+const hasRemixDrafts = computed(() => {
+  const reel = selectedReel.value
+  if (!reel) return false
+  return Boolean((reel.hook || '').trim() || (reel.script || '').trim() || (reel.cta || '').trim())
+})
+
 const isAnalysisLoading = computed(() => {
   const reel = selectedReel.value
   if (!reel) return false
+  // If Hook/Script already exist, never blank the whole column behind skeletons.
+  if (hasRemixDrafts.value) return false
   return Boolean(reel.speech_pending || reel.analysis_pending || speechPolling.value)
+})
+
+const isOverviewLoading = computed(() => {
+  const reel = selectedReel.value
+  if (!reel) return false
+  return Boolean(
+    reel.speech_pending ||
+      (reel.analysis_pending && isOverviewStub.value) ||
+      (speechPolling.value && isOverviewStub.value),
+  )
 })
 
 const filteredReels = computed(() => {
@@ -178,14 +205,14 @@ function stopSpeechPolling() {
 
 function applyAnalysisUpdate(body, reelId) {
   if (selectedReel.value?.id !== reelId) return
-  const wasLoading = Boolean(
+  const wasBusy = Boolean(
     selectedReel.value?.speech_pending ||
       selectedReel.value?.analysis_pending ||
       speechPolling.value,
   )
-  const stillLoading = Boolean(body.speech_pending || body.analysis_pending)
   selectedReel.value = body
-  if (wasLoading && !stillLoading) {
+  const stillBusy = Boolean(body.speech_pending || body.analysis_pending)
+  if (wasBusy && !stillBusy) {
     analysisRevealKey.value += 1
     stopSpeechPolling()
   }
@@ -828,8 +855,17 @@ onBeforeUnmount(() => {
                         <strong>Reels AI</strong>
                         <small>Про что ролик</small>
                       </div>
+                      <span v-if="isOverviewLoading" class="ai-status ai-status-live">
+                        <LoaderCircle :size="13" class="spin" />
+                        Собираю разбор…
+                      </span>
                     </div>
-                    <div class="ai-chat-body">
+                    <div v-if="isOverviewLoading" class="analysis-skeleton">
+                      <span class="skel-line skel-wide"></span>
+                      <span class="skel-line skel-wide"></span>
+                      <span class="skel-line skel-mid"></span>
+                    </div>
+                    <div v-else class="ai-chat-body">
                       <p v-for="(paragraph, index) in overviewParagraphs" :key="index">{{ paragraph }}</p>
                     </div>
                   </section>

@@ -114,12 +114,19 @@ def offline_overview(
     caption: str,
     title: str,
     has_speech: bool,
+    waiting: bool = False,
 ) -> str:
     parts: list[str] = [build_header(author, handle, duration_label, views_label)]
-    if has_speech:
+    if waiting and has_speech:
         parts.append(
             "По речи автора собираю объяснение и структуру ремикса: Hook, сплошной Script и Call to Action в финале. "
             "Через пару секунд текст уточнится."
+        )
+    elif has_speech:
+        gist = _clip(spoken, 160)
+        parts.append(
+            f"Кратко по речи автора: {gist} "
+            "Ниже — Hook, сплошной Script и Call to Action для ремикса."
         )
     elif caption and caption.lower() not in {title.lower(), "instagram reel"}:
         parts.append(f"По описанию тема ролика примерно: {_clip(caption, 220)}.")
@@ -203,13 +210,13 @@ def enrich_reel_analysis(
         store_cached_analysis(reel, stored_overview, hook, script, cta, from_llm=True)
         return stored_overview, hook, script, cta, False
 
-    if sync_llm and has_speech:
+    if sync_llm and (has_speech or caption or title):
         bundle = analyze_reel_bundle(
             author=author,
             handle=handle,
             duration_label=duration_label,
             views_label=views_label,
-            transcript=spoken,
+            transcript=spoken if has_speech else None,
             caption=caption or None,
             title=title or None,
             need_overview=True,
@@ -232,18 +239,21 @@ def enrich_reel_analysis(
             handle=handle,
             duration_label=duration_label,
             views_label=views_label,
-            transcript=spoken,
+            transcript=spoken if has_speech else None,
             caption=caption or None,
             title=title or None,
             allow_wait=True,
         )
-        hook, script, cta = split_transcript_into_sections(spoken, caption, use_llm=False)
+        if has_speech:
+            hook, script, cta = split_transcript_into_sections(spoken, caption, use_llm=False)
+        else:
+            hook, script, cta = split_transcript_into_sections(None, caption or title, use_llm=False)
         if explained and _is_ai_overview(explained):
             overview = f"{build_header(author, handle, duration_label, views_label)}\n\n{explained.strip()}"
             store_cached_analysis(reel, overview, hook, script, cta, from_llm=True)
             return overview, hook, script, cta, False
 
-        # Keep pending=False only for this worker pass; do not poison cache as "done AI".
+        # LLM unavailable — unblock UI with heuristic sections (pending=False).
         overview = offline_overview(
             author=author,
             handle=handle,
@@ -252,14 +262,16 @@ def enrich_reel_analysis(
             spoken=spoken,
             caption=caption,
             title=title,
-            has_speech=True,
+            has_speech=has_speech,
+            waiting=False,
         )
         store_cached_analysis(reel, overview, hook, script, cta, from_llm=False)
-        return overview, hook, script, cta, True
+        return overview, hook, script, cta, False
 
     if cached:
         overview, hook, script, cta, from_llm = cached
-        return overview, hook, script, cta, (has_speech and not from_llm)
+        needs_ai = has_speech and not from_llm and not _is_ai_overview(overview)
+        return overview, hook, script, cta, needs_ai
 
     if has_speech and _sections_look_structured(spoken, reel):
         overview = offline_overview(
@@ -271,6 +283,7 @@ def enrich_reel_analysis(
             caption=caption,
             title=title,
             has_speech=True,
+            waiting=True,
         )
         hook = continuous_text(reel.hook)[:200]
         script = continuous_text(reel.script)[:2000]
@@ -301,8 +314,10 @@ def enrich_reel_analysis(
         caption=caption,
         title=title,
         has_speech=has_speech,
+        waiting=has_speech,
     )
     store_cached_analysis(reel, overview, hook, script, cta, from_llm=False)
+    # Pending only while we still expect an AI pass for spoken reels.
     return overview, hook, script, cta, has_speech
 
 
@@ -316,7 +331,8 @@ def _analysis_worker(reel_id: UUID) -> None:
             competitor = session.get(Competitor, reel.competitor_id)
             if competitor is None:
                 return
-            if not looks_like_real_transcript(reel.transcript):
+            if reel.transcript is None:
+                # STT still running — wait for speech or empty marker.
                 return
 
             from app.services.serializers import format_duration, format_views

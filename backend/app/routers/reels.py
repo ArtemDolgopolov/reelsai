@@ -68,11 +68,11 @@ def get_reel(
         raise HTTPException(status_code=404, detail="Competitor not found")
 
     # Instant response — refine Hook/Script/CTA from speech in the background.
-    if not looks_like_real_transcript(reel.transcript):
+    if reel.transcript is None:
         background_tasks.add_task(schedule_transcripts, [reel.id])
 
     detail = reel_to_detail(reel, competitor, session=session)
-    if detail.analysis_pending:
+    if detail.analysis_pending or detail.speech_pending:
         background_tasks.add_task(schedule_analysis, reel.id)
     return detail
 
