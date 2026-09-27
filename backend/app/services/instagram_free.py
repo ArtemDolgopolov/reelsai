@@ -584,19 +584,23 @@ class InstagramFreeClient:
         for attempt in range(2):
             client = _prime_guest_client(username)
             try:
-                # Feed-by-username first — works even when web_profile_info returns 429.
-                feed_items, feed_user = _fetch_user_feed(client, username, count=max(limit, 12))
+                # Over-fetch media so photo posts do not eat the reel quota.
+                feed_items, feed_user = _fetch_user_feed(client, username, count=max(limit * 2, 24))
                 web_user = _fetch_web_profile(client, username)
 
                 user: dict[str, Any] | None = None
+                profile_followers: int | None = None
+                profile_following: int | None = None
                 if web_user:
+                    profile_followers = int((web_user.get("edge_followed_by") or {}).get("count") or 0) or None
+                    profile_following = int((web_user.get("edge_follow") or {}).get("count") or 0) or None
                     user = {
                         "full_name": web_user.get("full_name"),
                         "biography": web_user.get("biography"),
                         "profile_pic_url": web_user.get("profile_pic_url"),
                         "profile_pic_url_hd": web_user.get("profile_pic_url_hd"),
                         "edge_owner_to_timeline_media": web_user.get("edge_owner_to_timeline_media")
-                        or {"count": len(feed_items)},
+                        or {"count": 0},
                         "edge_followed_by": web_user.get("edge_followed_by") or {"count": 0},
                         "edge_follow": web_user.get("edge_follow") or {"count": 0},
                         "id": web_user.get("id") or web_user.get("pk"),
@@ -607,7 +611,7 @@ class InstagramFreeClient:
                         "biography": None,
                         "profile_pic_url": feed_user.get("profile_pic_url"),
                         "profile_pic_url_hd": feed_user.get("profile_pic_url"),
-                        "edge_owner_to_timeline_media": {"count": len(feed_items)},
+                        "edge_owner_to_timeline_media": {"count": 0},
                         "edge_followed_by": {"count": 0},
                         "edge_follow": {"count": 0},
                         "id": feed_user.get("id") or feed_user.get("pk"),
@@ -623,15 +627,16 @@ class InstagramFreeClient:
 
                 timeline_nodes = _nodes_from_profile(web_user, limit=limit * 2) if web_user else []
 
+                # Prefer clips (true reels) before mixed feed items.
                 nodes: list[dict[str, Any]] = []
                 seen: set[str] = set()
-                for node in feed_items + clip_items + timeline_nodes:
+                for node in clip_items + feed_items + timeline_nodes:
                     code = str(node.get("code") or node.get("shortcode") or "")
                     if not code or code in seen:
                         continue
                     seen.add(code)
                     nodes.append(node)
-                    if len(nodes) >= limit:
+                    if len(nodes) >= limit * 3:
                         break
 
                 if not nodes:
@@ -643,7 +648,7 @@ class InstagramFreeClient:
                         "biography": None,
                         "profile_pic_url": owner.get("profile_pic_url"),
                         "profile_pic_url_hd": owner.get("profile_pic_url"),
-                        "edge_owner_to_timeline_media": {"count": len(nodes)},
+                        "edge_owner_to_timeline_media": {"count": 0},
                         "edge_followed_by": {"count": 0},
                         "edge_follow": {"count": 0},
                     }
@@ -661,16 +666,15 @@ class InstagramFreeClient:
                 if not reels:
                     raise InstagramFreeError(f"Не удалось разобрать рилсы @{username}")
 
+                # posts_count must match loaded reels — never show a fake "20" from feed batch size.
                 return FreeCompetitorPayload(
                     username=username,
                     full_name=user.get("full_name"),
                     bio=user.get("biography"),
                     avatar_url=user.get("profile_pic_url_hd") or user.get("profile_pic_url"),
-                    posts_count=int(
-                        (user.get("edge_owner_to_timeline_media") or {}).get("count") or len(reels)
-                    ),
-                    followers_count=int((user.get("edge_followed_by") or {}).get("count") or 0),
-                    following_count=int((user.get("edge_follow") or {}).get("count") or 0),
+                    posts_count=len(reels),
+                    followers_count=profile_followers or 0,
+                    following_count=profile_following or 0,
                     reels=reels,
                 )
             except InstagramFreeError as exc:
@@ -722,31 +726,38 @@ class InstagramFreeClient:
 
     def fetch_discover_reels(self, limit: int = 20) -> list[FreeReelPayload]:
         """Pull a fresh random mix of public reels from Instagram (not user history)."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         from app.services.discovery_pool import DISCOVERY_ACCOUNTS, DISCOVERY_TAGS
 
         wanted = max(limit, 20)
         account_sample = random.sample(
             DISCOVERY_ACCOUNTS,
-            k=min(7, len(DISCOVERY_ACCOUNTS)),
+            k=min(5, len(DISCOVERY_ACCOUNTS)),
         )
-        tag_sample = random.sample(DISCOVERY_TAGS, k=min(3, len(DISCOVERY_TAGS)))
+        tag_sample = random.sample(DISCOVERY_TAGS, k=min(2, len(DISCOVERY_TAGS)))
         collected: list[FreeReelPayload] = []
         seen: set[str] = set()
 
-        for username in account_sample:
-            if len(collected) >= wanted:
-                break
+        def _one_account(username: str) -> list[FreeReelPayload]:
             try:
-                pool = self.fetch_account_reels_light(username, limit=8)
+                pool = self.fetch_account_reels_light(username, limit=6)
             except Exception as exc:  # noqa: BLE001
                 logger.info("Discover skip @%s: %s", username, exc)
-                continue
+                return []
             random.shuffle(pool)
-            for reel in pool[:4]:
-                if not reel.external_id or reel.external_id in seen:
-                    continue
-                seen.add(reel.external_id)
-                collected.append(reel)
+            return pool[:3]
+
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = [pool.submit(_one_account, username) for username in account_sample]
+            for future in as_completed(futures):
+                for reel in future.result():
+                    if not reel.external_id or reel.external_id in seen:
+                        continue
+                    seen.add(reel.external_id)
+                    collected.append(reel)
+                    if len(collected) >= wanted:
+                        break
                 if len(collected) >= wanted:
                     break
 

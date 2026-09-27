@@ -287,7 +287,8 @@ async function copySection(section) {
 }
 
 async function loadHomeReels() {
-  homeLoading.value = true
+  const hadItems = homeReels.value.length > 0
+  if (!hadItems) homeLoading.value = true
   try {
     const response = await fetch('/api/reels?limit=20', { cache: 'no-store' })
     if (!response.ok) throw new Error('Не удалось загрузить рилсы')
@@ -750,9 +751,9 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <div class="profile-stats">
-                <span><strong>{{ competitor.posts_count }}</strong><small>публикации</small></span>
-                <span><strong>{{ formatFollowers(competitor.followers_count) }}</strong><small>подписчики</small></span>
-                <span><strong>{{ competitor.following_count }}</strong><small>подписки</small></span>
+                <span><strong>{{ competitorReels.length }}</strong><small>рилсов</small></span>
+                <span v-if="competitor.followers_count"><strong>{{ formatFollowers(competitor.followers_count) }}</strong><small>подписчики</small></span>
+                <span v-if="competitor.following_count"><strong>{{ competitor.following_count }}</strong><small>подписки</small></span>
               </div>
             </article>
 
@@ -761,7 +762,7 @@ onBeforeUnmount(() => {
                 <h2>{{ competitorReels.length }} рилсов</h2>
                 <p>До 20 штук, отсортировано по просмотрам</p>
               </div>
-              <span class="success-badge"><Check :size="14" /> {{ competitorMessage || 'Готово' }}</span>
+              <span class="success-badge"><Check :size="14" /> Готово</span>
             </div>
 
             <div v-if="competitorReels.length" class="compact-reels-grid">

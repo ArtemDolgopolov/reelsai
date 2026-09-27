@@ -249,6 +249,7 @@ async def load_competitor(
         and datetime.now(timezone.utc) - existing_competitor.last_scraped_at < CACHE_TTL
     ):
         existing_competitor.tracked = True
+        existing_competitor.posts_count = len(existing_reels)
         session.add(existing_competitor)
         session.commit()
         session.refresh(existing_competitor)
@@ -272,6 +273,7 @@ async def load_competitor(
         # Never substitute another creator / seed demo for the requested handle.
         if existing_competitor is not None and existing_reels:
             existing_competitor.tracked = True
+            existing_competitor.posts_count = len(existing_reels)
             session.add(existing_competitor)
             session.commit()
             session.refresh(existing_competitor)
@@ -308,9 +310,14 @@ async def load_competitor(
         apply_reel_payload(session, competitor, item)
     session.commit()
 
+    reels = get_latest_reels(session, competitor.id)
+    competitor.posts_count = len(reels)
+    session.add(competitor)
+    session.commit()
+    session.refresh(competitor)
+
     background_tasks.add_task(_background_transcribe, competitor.id, payload.force_refresh)
 
-    reels = get_latest_reels(session, competitor.id)
     return CompetitorLoadResponse(
         competitor=competitor_to_read(competitor, reels_count=len(reels)),
         reels=[reel_to_list_item(reel, competitor.username) for reel in reels],

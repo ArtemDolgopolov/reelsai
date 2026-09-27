@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from datetime import datetime, timezone
 from uuid import UUID
@@ -17,9 +18,10 @@ from app.services.serializers import reel_to_list_item
 logger = logging.getLogger(__name__)
 
 # Soft cache so refreshing home every second does not hammer Instagram.
-_CACHE_TTL_SECONDS = 90
+_CACHE_TTL_SECONDS = 300
 _cache_items: list[ReelListItem] = []
 _cache_at: float = 0.0
+_refresh_lock = False
 
 
 def _upsert_discovery_competitor(session: Session, item: FreeReelPayload) -> Competitor | None:
@@ -76,33 +78,7 @@ def items_from_ids(session: Session, ordered_ids: list[UUID]) -> list[ReelListIt
     return [by_id[reel_id] for reel_id in ordered_ids if reel_id in by_id]
 
 
-def fetch_home_discover_reels(session: Session, limit: int = 20) -> list[ReelListItem]:
-    """Live Instagram random mix, with a short in-process cache and DB fallback."""
-    global _cache_items, _cache_at
-
-    now = time.monotonic()
-    if _cache_items and (now - _cache_at) < _CACHE_TTL_SECONDS:
-        return _cache_items[:limit]
-
-    client = InstagramFreeClient()
-    try:
-        payloads = client.fetch_discover_reels(limit=max(limit, 20))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Live Instagram discovery failed: %s", exc)
-        payloads = []
-
-    if payloads:
-        try:
-            ordered_ids = persist_discovery_reels(session, payloads)
-            items = items_from_ids(session, ordered_ids)[:limit]
-            if items:
-                _cache_items = items
-                _cache_at = now
-                return items
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to persist discovery reels: %s", exc)
-
-    # Fallback: random from anything already in DB (including prior discovery).
+def _random_from_db(session: Session, limit: int) -> list[ReelListItem]:
     from sqlalchemy import text
 
     rows = session.execute(
@@ -118,7 +94,71 @@ def fetch_home_discover_reels(session: Session, limit: int = 20) -> list[ReelLis
         ),
         {"limit": limit},
     ).all()
-    items = items_from_ids(session, [row[0] for row in rows])
+    return items_from_ids(session, [row[0] for row in rows])
+
+
+def _live_discover_and_persist(session: Session, limit: int) -> list[ReelListItem]:
+    client = InstagramFreeClient()
+    try:
+        payloads = client.fetch_discover_reels(limit=max(limit, 20))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Live Instagram discovery failed: %s", exc)
+        return []
+
+    if not payloads:
+        return []
+    try:
+        ordered_ids = persist_discovery_reels(session, payloads)
+        return items_from_ids(session, ordered_ids)[:limit]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to persist discovery reels: %s", exc)
+        return []
+
+
+def _kick_background_refresh(*, force: bool = False) -> None:
+    """Refresh discovery cache without blocking the home API."""
+    global _refresh_lock, _cache_items, _cache_at
+    if _refresh_lock:
+        return
+    if not force and _cache_items and (time.monotonic() - _cache_at) < (_CACHE_TTL_SECONDS / 2):
+        return
+
+    from app.db import engine
+
+    def _run() -> None:
+        global _refresh_lock, _cache_items, _cache_at
+        _refresh_lock = True
+        try:
+            with Session(engine) as session:
+                items = _live_discover_and_persist(session, 20)
+                if items:
+                    _cache_items = items
+                    _cache_at = time.monotonic()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Background home discovery refresh failed: %s", exc)
+        finally:
+            _refresh_lock = False
+
+    threading.Thread(target=_run, daemon=True, name="home-discovery-refresh").start()
+
+
+def fetch_home_discover_reels(session: Session, limit: int = 20) -> list[ReelListItem]:
+    """Serve home instantly from cache/DB; refresh Instagram in the background."""
+    global _cache_items, _cache_at
+
+    now = time.monotonic()
+    if _cache_items and (now - _cache_at) < _CACHE_TTL_SECONDS:
+        return _cache_items[:limit]
+
+    db_items = _random_from_db(session, limit)
+    if db_items:
+        _cache_items = db_items
+        _cache_at = now
+        _kick_background_refresh(force=True)
+        return db_items[:limit]
+
+    # Cold start only — nothing in DB yet.
+    items = _live_discover_and_persist(session, limit)
     if items:
         _cache_items = items
         _cache_at = now
