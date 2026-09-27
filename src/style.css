@@ -683,6 +683,11 @@ img {
   outline: 0;
 }
 
+.competitor-loader input::placeholder {
+  color: #a39eab;
+  font-weight: 550;
+}
+
 .primary-button {
   min-height: 43px;
   padding: 0 19px;
@@ -710,12 +715,23 @@ img {
   min-width: 0;
 }
 
-.profile-main img {
+.profile-main img,
+.profile-avatar {
   width: 56px;
   height: 56px;
   object-fit: cover;
   border: 2px solid #eee7fb;
   border-radius: 50%;
+}
+
+.profile-avatar-fallback {
+  display: grid;
+  flex: 0 0 56px;
+  color: white;
+  font-size: 20px;
+  font-weight: 800;
+  place-items: center;
+  background: linear-gradient(145deg, #7c3aed, #db2777);
 }
 
 .profile-main strong,

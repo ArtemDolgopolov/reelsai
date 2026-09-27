@@ -42,11 +42,12 @@ function parseLocationHash() {
 const initialRoute = parseLocationHash()
 const currentPage = ref(initialRoute.page)
 const searchQuery = ref('')
-const competitorHandle = ref('@vibecoding_creator')
+const competitorHandle = ref('')
 const competitor = ref(null)
 const competitorReels = ref([])
 const competitorMessage = ref('')
 const competitorLoading = ref(false)
+const competitorAvatarBroken = ref(false)
 const homeReels = ref([])
 const homeLoading = ref(true)
 const selectedReel = ref(null)
@@ -121,6 +122,15 @@ function formatViews(count) {
 
 function formatFollowers(count) {
   return formatViews(count)
+}
+
+function competitorInitial(person) {
+  const name = (person?.full_name || person?.username || '?').trim()
+  return name.slice(0, 1).toUpperCase()
+}
+
+function onCompetitorAvatarError() {
+  competitorAvatarBroken.value = true
 }
 
 function thumbSrc(url) {
@@ -269,13 +279,14 @@ async function loadInitialCompetitor() {
     if (!competitors.length) return
 
     competitor.value = competitors[0]
-    competitorHandle.value = `@${competitors[0].username}`
+    // Keep the input empty — placeholder shows @username until the user types.
     const reelsResponse = await fetch(
       `/api/competitors/${competitors[0].id}/reels`,
       { cache: 'no-store' },
     )
     if (reelsResponse.ok) competitorReels.value = await reelsResponse.json()
     competitorMessage.value = 'Загружено из PostgreSQL'
+    competitorAvatarBroken.value = false
   } catch {
     // The main feed still remains usable if the optional profile request fails.
   }
@@ -306,7 +317,7 @@ async function loadCompetitor(forceRefresh = false) {
     competitor.value = body.competitor
     competitorReels.value = body.reels
     competitorMessage.value = body.message
-    competitorHandle.value = `@${body.competitor.username}`
+    competitorAvatarBroken.value = false
     await loadHomeReels()
 
     // Speech transcripts arrive in the background — refresh once shortly after.
@@ -540,12 +551,19 @@ onBeforeUnmount(() => {
         <div class="competitor-loader">
           <label>
             <Camera :size="20" />
-            <input v-model="competitorHandle" aria-label="Instagram username" />
+            <input
+              v-model="competitorHandle"
+              type="text"
+              placeholder="@username"
+              aria-label="Instagram username"
+              autocomplete="off"
+              spellcheck="false"
+            />
           </label>
           <button
             class="primary-button"
             type="button"
-            :disabled="competitorLoading"
+            :disabled="competitorLoading || !competitorHandle.trim()"
             @click="loadCompetitor(false)"
           >
             {{ competitorLoading ? 'Загружаем…' : 'Загрузить' }}
@@ -565,7 +583,17 @@ onBeforeUnmount(() => {
         <template v-if="competitor">
           <article class="profile-card">
             <div class="profile-main">
-              <img :src="competitor.avatar_url" :alt="competitor.full_name || competitor.username" />
+              <img
+                v-if="competitor.avatar_url && !competitorAvatarBroken"
+                class="profile-avatar"
+                :src="thumbSrc(competitor.avatar_url)"
+                :alt="competitor.full_name || competitor.username"
+                referrerpolicy="no-referrer"
+                @error="onCompetitorAvatarError"
+              />
+              <span v-else class="profile-avatar profile-avatar-fallback" aria-hidden="true">
+                {{ competitorInitial(competitor) }}
+              </span>
               <div>
                 <strong>{{ competitor.full_name || competitor.username }}</strong>
                 <span>@{{ competitor.username }}</span>

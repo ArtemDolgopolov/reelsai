@@ -13,7 +13,7 @@ from sqlmodel import Session
 
 from app.db import engine
 from app.models import Competitor, Reel
-from app.services.groq_llm import analyze_reel_bundle
+from app.services.groq_llm import analyze_reel_bundle, explain_reel_in_russian
 from app.services.instagram_free import looks_like_real_transcript
 from app.services.transcript_sections import (
     DEFAULT_CTA,
@@ -29,6 +29,15 @@ _CACHE_TTL_S = 60 * 60
 _enrich_lock = threading.Lock()
 _enrich_inflight: set[str] = set()
 
+_PLACEHOLDER_MARKERS = (
+    "собираю объяснение",
+    "собрал структуру ремикса",
+    "через пару секунд текст уточнится",
+    "пока мало контекста",
+    "ниже — стартовые",
+    "ниже — рабочие заготовки",
+)
+
 
 def _clean(text: str | None) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())
@@ -40,6 +49,15 @@ def _clip(text: str, limit: int = 280) -> str:
         return text
     cut = text[: limit - 1].rsplit(" ", 1)[0].strip() or text[: limit - 1]
     return f"{cut}…"
+
+
+def _is_ai_overview(text: str | None) -> bool:
+    """True when overview looks like a real LLM explanation, not a loading stub."""
+    cleaned = (text or "").strip()
+    if len(cleaned) < 90:
+        return False
+    low = cleaned.lower()
+    return not any(marker in low for marker in _PLACEHOLDER_MARKERS)
 
 
 def _cache_key(reel: Reel) -> str:
@@ -157,7 +175,7 @@ def enrich_reel_analysis(
     """
     Return overview, hook, script, cta, analysis_pending.
 
-    Instant path (sync_llm=False): never blocks on Groq — local/cached only.
+    Instant path (sync_llm=False): never blocks on Groq — local/cached/persisted only.
     Full path (sync_llm=True): may call Groq with waits — background only.
     """
     author = competitor.full_name or f"@{competitor.username}"
@@ -166,11 +184,24 @@ def enrich_reel_analysis(
     caption = continuous_text(reel.caption)
     title = continuous_text(reel.title)
     has_speech = looks_like_real_transcript(spoken)
+    stored_overview = (reel.analysis_overview or "").strip()
 
     cached = get_cached_analysis(reel)
-    if cached and cached[4]:
+    if cached and cached[4] and _is_ai_overview(cached[0]):
         overview, hook, script, cta, _ = cached
         return overview, hook, script, cta, False
+
+    if _is_ai_overview(stored_overview):
+        if has_speech and _sections_look_structured(spoken, reel):
+            hook = continuous_text(reel.hook)[:200]
+            script = continuous_text(reel.script)[:2000]
+            cta = continuous_text(reel.cta)[:500] or DEFAULT_CTA
+        elif has_speech:
+            hook, script, cta = split_transcript_into_sections(spoken, caption, use_llm=False)
+        else:
+            hook, script, cta = split_transcript_into_sections(None, caption or title, use_llm=False)
+        store_cached_analysis(reel, stored_overview, hook, script, cta, from_llm=True)
+        return stored_overview, hook, script, cta, False
 
     if sync_llm and has_speech:
         bundle = analyze_reel_bundle(
@@ -194,15 +225,37 @@ def enrich_reel_analysis(
             cta = continuous_text(bundle.get("cta")) or DEFAULT_CTA
             store_cached_analysis(reel, overview, hook, script, cta, from_llm=True)
             return overview, hook, script, cta, False
-        # Settled after a failed LLM attempt — stop request/background loops.
-        hook, script, cta = split_transcript_into_sections(spoken, caption, use_llm=False)
-        overview = (
-            f"{build_header(author, handle, duration_label, views_label)}\n\n"
-            "По речи автора собрал структуру ремикса: Hook, сплошной Script и Call to Action в финале — "
-            "без простыни дословной расшифровки."
+
+        # Bundle failed (rate limit / bad JSON) — still get a real AI explanation.
+        explained = explain_reel_in_russian(
+            author=author,
+            handle=handle,
+            duration_label=duration_label,
+            views_label=views_label,
+            transcript=spoken,
+            caption=caption or None,
+            title=title or None,
+            allow_wait=True,
         )
-        store_cached_analysis(reel, overview, hook, script, cta, from_llm=True)
-        return overview, hook, script, cta, False
+        hook, script, cta = split_transcript_into_sections(spoken, caption, use_llm=False)
+        if explained and _is_ai_overview(explained):
+            overview = f"{build_header(author, handle, duration_label, views_label)}\n\n{explained.strip()}"
+            store_cached_analysis(reel, overview, hook, script, cta, from_llm=True)
+            return overview, hook, script, cta, False
+
+        # Keep pending=False only for this worker pass; do not poison cache as "done AI".
+        overview = offline_overview(
+            author=author,
+            handle=handle,
+            duration_label=duration_label,
+            views_label=views_label,
+            spoken=spoken,
+            caption=caption,
+            title=title,
+            has_speech=True,
+        )
+        store_cached_analysis(reel, overview, hook, script, cta, from_llm=False)
+        return overview, hook, script, cta, True
 
     if cached:
         overview, hook, script, cta, from_llm = cached
@@ -275,14 +328,20 @@ def _analysis_worker(reel_id: UUID) -> None:
                 duration_label=format_duration(reel.duration_seconds),
                 sync_llm=True,
             )
-            if pending:
-                return
             reel.hook = hook[:200]
             reel.script = script[:2000]
             reel.cta = (cta or DEFAULT_CTA)[:500]
+            if _is_ai_overview(overview):
+                reel.analysis_overview = overview[:4000]
             session.add(reel)
             session.commit()
-            logger.info("LLM remix analysis ready for %s", reel.external_id or reel.id)
+            if pending:
+                logger.info(
+                    "LLM remix still pending for %s — will retry on next open",
+                    reel.external_id or reel.id,
+                )
+            else:
+                logger.info("LLM remix analysis ready for %s", reel.external_id or reel.id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Background analysis failed for %s: %s", reel_id, exc)
     finally:

@@ -75,6 +75,7 @@ class Reel(SQLModel, table=True):
     script: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
     cta: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
     transcript: Optional[str] = Field(default=None, sa_column=Column(Text))
+    analysis_overview: Optional[str] = Field(default=None, sa_column=Column(Text))
     why_it_works: Optional[str] = Field(default=None, sa_column=Column(Text))
     posted_at: Optional[datetime] = Field(default=None)
     status: ReelStatus = Field(default=ReelStatus.ready)

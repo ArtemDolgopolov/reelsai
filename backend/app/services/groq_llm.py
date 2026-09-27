@@ -246,20 +246,39 @@ def explain_reel_in_russian(
     transcript: str | None,
     caption: str | None,
     title: str | None,
+    allow_wait: bool = False,
 ) -> str | None:
-    analysis = analyze_reel_bundle(
-        author=author,
-        handle=handle,
-        duration_label=duration_label,
-        views_label=views_label,
-        transcript=transcript,
-        caption=caption,
-        title=title,
-        allow_wait=False,
+    """Dedicated Russian explanation — used when the full JSON bundle fails."""
+    spoken = (transcript or "").strip()
+    context_bits: list[str] = []
+    if spoken:
+        context_bits.append(f"Расшифровка речи:\n{spoken[:2200]}")
+    if caption:
+        context_bits.append(f"Подпись Instagram:\n{caption[:800]}")
+    if title:
+        context_bits.append(f"Заголовок:\n{title[:300]}")
+    if not context_bits:
+        return None
+
+    system = (
+        "Ты редактор Reels-аналитики. Пиши по-русски, ясно и по делу, в стиле ответа ChatGPT. "
+        "Объясни, что происходит в ролике и о чём он, без дословной расшифровки. "
+        "Не копируй длинные куски речи. 2–4 коротких абзаца. Без markdown-заголовков и без списков."
     )
-    if analysis and analysis.get("overview"):
-        return str(analysis["overview"])
-    return None
+    user = (
+        f"Автор: {author} ({handle})\n"
+        f"Длительность: {duration_label}\n"
+        f"Просмотры: {views_label}\n\n"
+        + "\n\n".join(context_bits)
+        + "\n\nСформулируй понятное объяснение: о чём рилс, что показывает автор и какой главный посыл."
+    )
+    return groq_chat(
+        system=system,
+        user=user,
+        temperature=0.35,
+        max_tokens=550,
+        allow_wait=allow_wait,
+    )
 
 
 def structure_remix_sections(transcript: str, caption: str | None = None) -> tuple[str, str, str] | None:

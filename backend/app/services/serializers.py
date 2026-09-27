@@ -74,6 +74,15 @@ def reel_to_detail(
     if cta and continuous_text(reel.cta) != continuous_text(cta):
         reel.cta = (cta or DEFAULT_CTA)[:500]
         changed = True
+    if (
+        overview
+        and overview != (reel.analysis_overview or "")
+        and "собираю объяснение" not in overview.lower()
+        and "через пару секунд" not in overview.lower()
+        and len(overview) > 90
+    ):
+        reel.analysis_overview = overview[:4000]
+        changed = True
     if changed and session is not None:
         session.add(reel)
         try:
@@ -81,6 +90,18 @@ def reel_to_detail(
             session.refresh(reel)
         except Exception:  # noqa: BLE001
             session.rollback()
+
+    # Prefer persisted AI overview when the live path still has a loading stub.
+    stored = (reel.analysis_overview or "").strip()
+    if stored and "собираю объяснение" not in stored.lower() and "через пару секунд" not in stored.lower():
+        stubby = (
+            "собираю объяснение" in (overview or "").lower()
+            or "через пару секунд" in (overview or "").lower()
+            or "собрал структуру ремикса" in (overview or "").lower()
+        )
+        if stubby or not overview:
+            overview = stored
+            analysis_pending = False
 
     spoken = (reel.transcript or "").strip()
     return ReelDetail(
