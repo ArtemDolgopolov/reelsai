@@ -20,6 +20,12 @@ class ReelStatus(str, Enum):
     error = "error"
 
 
+class ShootStatus(str, Enum):
+    todo = "todo"  # not started
+    ready = "ready"  # script ready, waiting to film
+    done = "done"  # filmed and published
+
+
 class Competitor(SQLModel, table=True):
     __tablename__ = "competitors"
     __table_args__ = (UniqueConstraint("username", name="uq_competitors_username"),)
@@ -93,3 +99,23 @@ class Reel(SQLModel, table=True):
     )
 
     competitor: Optional[Competitor] = Relationship(back_populates="reels")
+
+
+class ContentPlanItem(SQLModel, table=True):
+    __tablename__ = "content_plan_items"
+    __table_args__ = (UniqueConstraint("reel_id", name="uq_content_plan_reel_id"),)
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    reel_id: UUID = Field(foreign_key="reels.id", index=True)
+    shoot_status: ShootStatus = Field(default=ShootStatus.todo, index=True)
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    )
+    updated_at: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            onupdate=func.now(),
+            nullable=False,
+        )
+    )

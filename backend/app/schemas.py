@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.models import CompetitorStatus, ReelStatus
+from app.models import CompetitorStatus, ReelStatus, ShootStatus
 
 
 class CompetitorRead(BaseModel):
@@ -93,3 +93,28 @@ class HealthResponse(BaseModel):
     status: str
     database: str
     ingest: str
+
+
+class ContentPlanCreateRequest(BaseModel):
+    reel_id: UUID
+
+
+class ContentPlanUpdateRequest(BaseModel):
+    shoot_status: ShootStatus
+
+
+class ContentPlanItemRead(BaseModel):
+    id: UUID
+    reel_id: UUID
+    shoot_status: ShootStatus
+    title: str
+    author: str
+    duration: str
+    thumbnail_url: Optional[str] = None
+    instagram_url: Optional[str] = None
+    overlay_text: Optional[str] = None
+    views_count: int
+    likes_count: int
+    comments_count: int
+    created_at: datetime
+    updated_at: datetime

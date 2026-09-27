@@ -332,7 +332,6 @@ img {
   display: grid;
   width: 24px;
   height: 24px;
-  margin-left: auto;
   padding: 0;
   color: #938c9d;
   place-items: center;
@@ -340,6 +339,60 @@ img {
   border: 0;
   border-radius: 6px;
   cursor: pointer;
+}
+
+.plan-add-button {
+  width: 28px !important;
+  height: 28px !important;
+  color: #6d28d9 !important;
+  background: #f5f3ff !important;
+  border: 1px solid #ddd6fe !important;
+  border-radius: 8px !important;
+}
+
+.plan-add-button.added {
+  color: #15803d !important;
+  background: #ecfdf3 !important;
+  border-color: #bbf7d0 !important;
+}
+
+.plan-add-button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.shoot-status-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.shoot-status-button {
+  width: 28px !important;
+  height: 28px !important;
+  color: #9a93a6 !important;
+  background: #f7f5fb !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 8px !important;
+}
+
+.shoot-status-button.todo.active {
+  color: #b91c1c !important;
+  background: #fef2f2 !important;
+  border-color: #fecaca !important;
+}
+
+.shoot-status-button.ready.active {
+  color: #b45309 !important;
+  background: #fffbeb !important;
+  border-color: #fde68a !important;
+}
+
+.shoot-status-button.done.active {
+  color: #15803d !important;
+  background: #ecfdf3 !important;
+  border-color: #bbf7d0 !important;
 }
 
 .mini-avatar {

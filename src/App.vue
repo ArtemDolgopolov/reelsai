@@ -6,12 +6,15 @@ import {
   Camera,
   Check,
   CircleHelp,
+  ClipboardList,
+  Clapperboard,
   Copy,
   ExternalLink,
   Eye,
   FileText,
   Heart,
   Home,
+  Hourglass,
   Lightbulb,
   LoaderCircle,
   MessageCircle,
@@ -28,7 +31,7 @@ import {
   Zap,
 } from '@lucide/vue'
 
-const pages = ['home', 'competitors', 'detail']
+const pages = ['home', 'plan', 'competitors', 'detail']
 
 function parseLocationHash() {
   const raw = window.location.hash.replace(/^#/, '').trim()
@@ -55,6 +58,10 @@ const competitorListAvatarBroken = ref({})
 const selectedCompetitorId = ref(initialRoute.competitorId)
 const homeReels = ref([])
 const homeLoading = ref(true)
+const planItems = ref([])
+const planLoading = ref(false)
+const planBusyReelId = ref(null)
+const planMessage = ref('')
 const selectedReel = ref(null)
 const detailLoading = ref(Boolean(initialRoute.page === 'detail' && initialRoute.reelId))
 const editingSection = ref(null)
@@ -139,8 +146,13 @@ const filteredReels = computed(() => {
   )
 })
 
+const planReelIds = computed(() => new Set(planItems.value.map((item) => item.reel_id)))
+
 const selectedDurationLabel = computed(() => selectedReel.value?.duration || '0:00')
 const selectedViewsLabel = computed(() => formatViews(selectedReel.value?.views_count || 0))
+const selectedInPlan = computed(() =>
+  selectedReel.value ? planReelIds.value.has(selectedReel.value.id) : false,
+)
 
 function formatViews(count) {
   if (count >= 1_000_000) {
@@ -212,6 +224,13 @@ function navigate(page, id = null) {
     selectedReel.value = null
     editingSection.value = null
     selectedCompetitorId.value = null
+  }
+  if (page === 'plan') {
+    stopSpeechPolling()
+    selectedReel.value = null
+    editingSection.value = null
+    selectedCompetitorId.value = null
+    void loadContentPlan()
   }
   if (page === 'competitors' && !id) {
     selectedCompetitorId.value = null
@@ -448,6 +467,14 @@ function syncPageFromHash() {
     }
     return
   }
+  if (page === 'plan') {
+    stopSpeechPolling()
+    selectedReel.value = null
+    editingSection.value = null
+    selectedCompetitorId.value = null
+    void loadContentPlan()
+    return
+  }
   stopSpeechPolling()
   selectedReel.value = null
   editingSection.value = null
@@ -503,12 +530,81 @@ function onListAvatarError(competitorId) {
   }
 }
 
+async function loadContentPlan() {
+  planLoading.value = true
+  try {
+    const response = await fetch('/api/content-plan', { cache: 'no-store' })
+    if (!response.ok) throw new Error('Не удалось загрузить контент-план')
+    planItems.value = await response.json()
+  } catch (error) {
+    saveError.value = error.message
+  } finally {
+    planLoading.value = false
+  }
+}
+
+async function addToContentPlan(reelId) {
+  if (!reelId || planBusyReelId.value === reelId) return
+  if (planReelIds.value.has(reelId)) {
+    planMessage.value = 'Уже в контент-плане'
+    navigate('plan')
+    return
+  }
+  planBusyReelId.value = reelId
+  planMessage.value = ''
+  saveError.value = ''
+  try {
+    const response = await fetch('/api/content-plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reel_id: reelId }),
+    })
+    const body = await response.json()
+    if (!response.ok) {
+      throw new Error(body.detail || 'Не удалось добавить в контент-план')
+    }
+    planItems.value = [body, ...planItems.value.filter((item) => item.id !== body.id)]
+    planMessage.value = 'Добавлено в контент-план'
+  } catch (error) {
+    saveError.value = error.message
+  } finally {
+    planBusyReelId.value = null
+  }
+}
+
+async function setShootStatus(itemId, shootStatus) {
+  const current = planItems.value.find((item) => item.id === itemId)
+  if (!current || current.shoot_status === shootStatus) return
+  const previous = current.shoot_status
+  current.shoot_status = shootStatus
+  try {
+    const response = await fetch(`/api/content-plan/${itemId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shoot_status: shootStatus }),
+    })
+    const body = await response.json()
+    if (!response.ok) {
+      throw new Error(body.detail || 'Не удалось обновить статус')
+    }
+    planItems.value = planItems.value.map((item) => (item.id === itemId ? body : item))
+  } catch (error) {
+    current.shoot_status = previous
+    saveError.value = error.message
+  }
+}
+
 onMounted(async () => {
   window.addEventListener('hashchange', syncPageFromHash)
+  void loadContentPlan()
   if (initialRoute.page === 'detail' && initialRoute.reelId) {
     // Open the reel immediately — home discovery can take tens of seconds.
     await openReel(initialRoute.reelId, { syncHash: false })
     void Promise.all([loadHomeReels(), loadInitialCompetitor()])
+    return
+  }
+  if (initialRoute.page === 'plan') {
+    await Promise.all([loadContentPlan(), loadHomeReels(), loadInitialCompetitor()])
     return
   }
   await Promise.all([loadHomeReels(), loadInitialCompetitor()])
@@ -538,6 +634,15 @@ onBeforeUnmount(() => {
         >
           <Home :size="18" />
           <span>Главное</span>
+        </button>
+        <button
+          class="nav-item"
+          :class="{ active: currentPage === 'plan' }"
+          type="button"
+          @click="navigate('plan')"
+        >
+          <ClipboardList :size="18" />
+          <span>Контент план</span>
         </button>
         <button
           class="nav-item"
@@ -607,8 +712,17 @@ onBeforeUnmount(() => {
               >
                 <ExternalLink :size="14" />
               </a>
-              <button type="button" aria-label="Дополнительные действия">
-                <MoreVertical :size="16" />
+              <button
+                type="button"
+                class="plan-add-button"
+                :class="{ added: planReelIds.has(reel.id) }"
+                :disabled="planBusyReelId === reel.id"
+                :aria-label="planReelIds.has(reel.id) ? 'Уже в контент-плане' : 'Взять на съёмку'"
+                :title="planReelIds.has(reel.id) ? 'Уже в контент-плане' : 'Взять на съёмку'"
+                @click.stop="addToContentPlan(reel.id)"
+              >
+                <Check v-if="planReelIds.has(reel.id)" :size="15" />
+                <Clapperboard v-else :size="15" />
               </button>
             </div>
             <h2>{{ reel.title }}</h2>
@@ -628,6 +742,98 @@ onBeforeUnmount(() => {
           <Search :size="30" />
           <strong>{{ homeLoading ? 'Загружаем рилсы...' : 'Ничего не найдено' }}</strong>
           <span>Попробуйте изменить запрос или загрузить конкурента</span>
+        </div>
+      </section>
+
+      <section v-else-if="currentPage === 'plan'" class="page plan-page">
+        <header class="page-header">
+          <div>
+            <span class="eyebrow">Очередь на съёмку</span>
+            <h1>Контент план</h1>
+            <p>Рилсы, которые вы взяли на съёмку. Меняйте статус: не готово → ждёт съёмки → снято.</p>
+          </div>
+        </header>
+
+        <div class="section-heading">
+          <div>
+            <span class="live-dot"></span>
+            <strong>Ваша очередь</strong>
+          </div>
+          <span>{{ planLoading ? 'Загрузка...' : `${planItems.length} в плане` }}</span>
+        </div>
+
+        <div v-if="planMessage" class="competitor-feedback">
+          <span class="success-badge"><Check :size="14" /> {{ planMessage }}</span>
+        </div>
+
+        <div v-if="planItems.length" class="reels-grid">
+          <article v-for="item in planItems" :key="item.id" class="reel-card">
+            <button class="poster" type="button" @click="openReel(item.reel_id)">
+              <img
+                v-if="item.thumbnail_url"
+                :src="thumbSrc(item.thumbnail_url)"
+                :alt="item.title"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+                @error="onThumbError"
+              />
+              <span class="poster-shade"></span>
+              <span class="poster-hook">{{ posterLine(item) }}</span>
+              <span class="duration"><Play :size="10" fill="currentColor" /> {{ item.duration }}</span>
+            </button>
+            <div class="reel-meta">
+              <span class="mini-avatar">{{ item.author.slice(1, 2).toUpperCase() }}</span>
+              <span>{{ item.author }}</span>
+              <div class="shoot-status-group" role="group" aria-label="Статус съёмки">
+                <button
+                  type="button"
+                  class="shoot-status-button todo"
+                  :class="{ active: item.shoot_status === 'todo' }"
+                  title="Ещё не готово"
+                  aria-label="Ещё не готово"
+                  @click.stop="setShootStatus(item.id, 'todo')"
+                >
+                  <X :size="14" />
+                </button>
+                <button
+                  type="button"
+                  class="shoot-status-button ready"
+                  :class="{ active: item.shoot_status === 'ready' }"
+                  title="Ждёт съёмки"
+                  aria-label="Ждёт съёмки"
+                  @click.stop="setShootStatus(item.id, 'ready')"
+                >
+                  <Hourglass :size="14" />
+                </button>
+                <button
+                  type="button"
+                  class="shoot-status-button done"
+                  :class="{ active: item.shoot_status === 'done' }"
+                  title="Снято и выложено"
+                  aria-label="Снято и выложено"
+                  @click.stop="setShootStatus(item.id, 'done')"
+                >
+                  <Check :size="14" />
+                </button>
+              </div>
+            </div>
+            <h2>{{ item.title }}</h2>
+            <div class="stats-pills">
+              <span class="stat-pill views"><Eye :size="14" /> {{ formatViews(item.views_count) }}</span>
+              <span class="stat-pill likes"><Heart :size="14" /> {{ formatViews(item.likes_count) }}</span>
+              <span class="stat-pill comments"><MessageCircle :size="14" /> {{ formatViews(item.comments_count) }}</span>
+            </div>
+            <button class="remix-button" type="button" @click="openReel(item.reel_id)">
+              <WandSparkles :size="15" />
+              Remix
+            </button>
+          </article>
+        </div>
+
+        <div v-else class="empty-state">
+          <Clapperboard :size="30" />
+          <strong>{{ planLoading ? 'Загружаем план…' : 'Контент-план пуст' }}</strong>
+          <span>Добавьте рилс с главной или со страницы разбора кнопкой «На съёмку»</span>
         </div>
       </section>
 
@@ -842,13 +1048,26 @@ onBeforeUnmount(() => {
               <span class="video-time">0:00 / {{ selectedDurationLabel }}</span>
             </div>
             <div class="video-actions">
-              <button class="primary-button wide" type="button">
-                <WandSparkles :size="17" />
-                Создать Remix
+              <button
+                class="primary-button wide"
+                type="button"
+                :disabled="planBusyReelId === selectedReel.id"
+                @click="addToContentPlan(selectedReel.id)"
+              >
+                <Check v-if="selectedInPlan" :size="17" />
+                <Clapperboard v-else :size="17" />
+                {{ selectedInPlan ? 'Уже в контент-плане' : 'Взять на съёмку' }}
               </button>
-              <button class="icon-button" type="button" aria-label="Другие действия">
-                <MoreVertical :size="18" />
-              </button>
+              <a
+                v-if="selectedReel.instagram_url"
+                class="icon-button"
+                :href="selectedReel.instagram_url"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Открыть оригинал"
+              >
+                <ExternalLink :size="18" />
+              </a>
             </div>
           </div>
 
