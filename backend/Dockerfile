@@ -4,13 +4,25 @@ WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV WHISPER_MODEL=base
+# Keep Hugging Face / faster-whisper cache inside the image layer.
+ENV HF_HOME=/opt/hf-cache
+ENV HUGGINGFACE_HUB_CACHE=/opt/hf-cache
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && python - <<'PY'
+from faster_whisper import WhisperModel
+import os
+model = os.getenv("WHISPER_MODEL", "small")
+print(f"Warming faster-whisper model={model}")
+WhisperModel(model, device="cpu", compute_type="int8")
+print("faster-whisper warm-up done")
+PY
 
 COPY alembic.ini .
 COPY alembic ./alembic
@@ -20,7 +32,7 @@ RUN sed -i 's/\r$//' ./entrypoint.sh && chmod +x ./entrypoint.sh
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=5 \
+HEALTHCHECK --interval=15s --timeout=5s --start-period=90s --retries=8 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"
 
 ENTRYPOINT ["./entrypoint.sh"]

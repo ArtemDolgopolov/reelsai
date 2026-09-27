@@ -1,40 +1,30 @@
-"""Speech-to-text from reel audio using free Google Web Speech via SpeechRecognition.
+"""High-quality speech-to-text for reel audio.
 
-Works from spoken audio (no Instagram captions/subtitles required).
-Language is auto-detected by scoring the first audio chunk across common locales.
-Long clips are split into ~45s chunks to stay within free recognizer limits.
+Providers (first success wins):
+1. Groq Whisper large-v3 — free tier, excellent on noisy / accented speech
+2. faster-whisper (local) — free, offline, multilingual auto-detect
+3. Google Web Speech — last-resort fallback
+
+No Instagram captions/subtitles are used; audio only.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import re
 import tempfile
+import threading
 from pathlib import Path
+
+import httpx
+
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Google Web Speech needs an explicit language code (default is en-US only).
-DETECT_LANGUAGES = (
-    "en-US",
-    "en-GB",
-    "ru-RU",
-    "uk-UA",
-    "es-ES",
-    "pt-BR",
-    "de-DE",
-    "fr-FR",
-    "it-IT",
-    "tr-TR",
-    "pl-PL",
-    "nl-NL",
-    "ar",
-    "hi-IN",
-    "id-ID",
-    "ja-JP",
-    "ko-KR",
-    "zh-CN",
-)
+_whisper_model = None
+_whisper_lock = threading.Lock()
 
 GARBAGE_PHRASES = (
     "hello google",
@@ -47,143 +37,221 @@ GARBAGE_PHRASES = (
 )
 
 
-def _hint_languages(hint_text: str | None) -> tuple[str, ...]:
-    """Reorder probe list using caption/title script as a soft prior — not as transcript."""
-    text = (hint_text or "").strip()
-    preferred: list[str] = []
-    if text:
-        if re.search(r"[\u0400-\u04FF]", text):
-            preferred.extend(["ru-RU", "uk-UA"])
-        if re.search(r"[\u0600-\u06FF]", text):
-            preferred.append("ar")
-        if re.search(r"[\u3040-\u30FF]", text):
-            preferred.append("ja-JP")
-        if re.search(r"[\uAC00-\uD7AF]", text):
-            preferred.append("ko-KR")
-        if re.search(r"[\u4E00-\u9FFF]", text):
-            preferred.append("zh-CN")
-        if re.search(r"[äöüßÄÖÜ]", text):
-            preferred.append("de-DE")
-        if re.search(r"[àâçéèêëîïôùûüÿœ]", text, re.I):
-            preferred.append("fr-FR")
-        if re.search(r"[áéíóúñ¿¡]", text, re.I):
-            preferred.extend(["es-ES", "pt-BR"])
-        # Latin captions — try both US/UK English early.
-        if re.search(r"[A-Za-z]{3,}", text) and not preferred:
-            preferred.extend(["en-GB", "en-US"])
-
-    ordered: list[str] = []
-    for code in preferred + list(DETECT_LANGUAGES):
-        if code not in ordered:
-            ordered.append(code)
-    return tuple(ordered)
-
-
 def _is_garbage(text: str) -> bool:
     low = text.lower().strip()
     if not low:
         return True
-    if any(phrase in low for phrase in GARBAGE_PHRASES):
+    if any(phrase in low for phrase in GARBAGE_PHRASES) and len(low) < 90:
         return True
-    # Extremely repetitive single-token spam.
     words = low.split()
     if len(words) >= 4 and len(set(words)) <= 2:
         return True
     return False
 
 
-def _score_google_result(result: object) -> tuple[float, str]:
-    """Return (score, transcript) from recognize_google(..., show_all=True)."""
-    if isinstance(result, str):
-        text = result.strip()
-        if not text or _is_garbage(text):
-            return -1.0, ""
-        return min(len(text), 400) / 20.0 + min(text.count(" "), 50) / 10.0, text
+def _looks_usable(text: str | None) -> bool:
+    if not text:
+        return False
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if len(cleaned) < 20:
+        return False
+    if cleaned.count(" ") < 3:
+        return False
+    return not _is_garbage(cleaned)
 
-    if not isinstance(result, dict):
-        return -1.0, ""
 
-    alternatives = result.get("alternative") or []
-    if not alternatives:
-        return -1.0, ""
+def _hint_language_code(hint_text: str | None) -> str | None:
+    """Soft language prior from caption/title script — never used as transcript."""
+    text = (hint_text or "").strip()
+    if not text:
+        return None
+    if re.search(r"[\u0400-\u04FF]", text):
+        return "ru"
+    if re.search(r"[\u0600-\u06FF]", text):
+        return "ar"
+    if re.search(r"[\u3040-\u30FF]", text):
+        return "ja"
+    if re.search(r"[\uAC00-\uD7AF]", text):
+        return "ko"
+    if re.search(r"[\u4E00-\u9FFF]", text):
+        return "zh"
+    if re.search(r"[äöüßÄÖÜ]", text):
+        return "de"
+    if re.search(r"[àâçéèêëîïôùûüÿœ]", text, re.I):
+        return "fr"
+    if re.search(r"[áéíóúñ¿¡]", text, re.I):
+        return "es"
+    if re.search(r"[A-Za-z]{4,}", text):
+        return "en"
+    return None
 
-    top = alternatives[0] if isinstance(alternatives[0], dict) else {}
-    text = str(top.get("transcript") or "").strip()
-    if not text or _is_garbage(text):
-        return -1.0, ""
 
-    confidence = top.get("confidence")
+def _wav_for_providers(path: Path) -> Path:
+    """Normalize to mono 16 kHz WAV when needed (Groq/Whisper prefer clean PCM)."""
+    suffix = path.suffix.lower()
+    if suffix == ".wav":
+        return path
     try:
-        conf = float(confidence) if confidence is not None else 0.35
-    except (TypeError, ValueError):
-        conf = 0.35
+        from pydub import AudioSegment
+    except ImportError:
+        return path
+    try:
+        audio = AudioSegment.from_file(path)
+        audio = audio.set_channels(1).set_frame_rate(16000)
+        # Cap very long reels to keep free-tier / micro latency sane.
+        if len(audio) > 180_000:
+            audio = audio[:180_000]
+        out = path.with_suffix(".norm.wav")
+        audio.export(out, format="wav")
+        return out
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Audio normalize failed, using original: %s", exc)
+        return path
 
-    score = conf * 15.0 + min(len(text), 400) / 25.0 + min(text.count(" "), 50) / 12.0
-    return score, text
+
+def _transcribe_groq(path: Path, hint_text: str | None = None) -> str | None:
+    settings = get_settings()
+    api_key = (settings.groq_api_key or os.getenv("GROQ_API_KEY") or "").strip()
+    if not api_key:
+        return None
+
+    wav = _wav_for_providers(path)
+    language = _hint_language_code(hint_text)
+    data: dict[str, str] = {
+        "model": settings.groq_whisper_model,
+        "response_format": "text",
+        "temperature": "0",
+    }
+    if language:
+        data["language"] = language
+
+    try:
+        with wav.open("rb") as handle:
+            files = {"file": (wav.name, handle, "audio/wav")}
+            response = httpx.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                data=data,
+                files=files,
+                timeout=120.0,
+            )
+        if response.status_code >= 400:
+            logger.warning("Groq STT HTTP %s: %s", response.status_code, response.text[:240])
+            return None
+        text = (response.text or "").strip().strip('"')
+        if _looks_usable(text):
+            logger.info("Groq transcribed %s (%s chars)", path.name, len(text))
+            return text
+        return None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Groq STT failed: %s", exc)
+        return None
 
 
-def _recognize_best(recognizer, audio_data, languages: tuple[str, ...]) -> tuple[str, str]:
-    """Try languages and return (best_language, best_text)."""
-    ranked: list[tuple[float, str, str]] = []
-    for language in languages:
+def _get_faster_whisper():
+    global _whisper_model
+    with _whisper_lock:
+        if _whisper_model is not None:
+            return _whisper_model
         try:
-            raw = recognizer.recognize_google(audio_data, language=language, show_all=True)
-        except Exception:  # noqa: BLE001
-            continue
-        score, text = _score_google_result(raw)
-        if score > 0 and text:
-            ranked.append((score, language, text))
-            # Good enough — stop burning free quota.
-            if score >= 10 and len(text) >= 40:
-                break
+            from faster_whisper import WhisperModel
+        except ImportError as exc:
+            logger.warning("faster-whisper not installed: %s", exc)
+            return None
 
-    if not ranked:
-        return "", ""
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    _, language, text = ranked[0]
-    return language, text
-
-
-def _recognize_chunk(recognizer, audio_data, languages: tuple[str, ...]) -> str:
-    language, text = _recognize_best(recognizer, audio_data, languages)
-    return text
+        settings = get_settings()
+        model_name = settings.whisper_model
+        logger.info("Loading faster-whisper model=%s compute=int8", model_name)
+        _whisper_model = WhisperModel(
+            model_name,
+            device="cpu",
+            compute_type="int8",
+            cpu_threads=max(1, min(2, os.cpu_count() or 1)),
+        )
+        return _whisper_model
 
 
-def transcribe_audio_file(
-    path: Path,
-    language: str | None = None,
-    hint_text: str | None = None,
-) -> str | None:
+def _transcribe_faster_whisper(path: Path, hint_text: str | None = None) -> str | None:
+    model = _get_faster_whisper()
+    if model is None:
+        return None
+
+    wav = _wav_for_providers(path)
+    language = _hint_language_code(hint_text)
+    try:
+        segments, info = model.transcribe(
+            str(wav),
+            language=language,
+            task="transcribe",
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 400},
+            beam_size=5,
+            best_of=5,
+            patience=1.0,
+            condition_on_previous_text=True,
+            temperature=[0.0, 0.2, 0.4],
+        )
+        parts = [segment.text.strip() for segment in segments if segment.text and segment.text.strip()]
+        text = " ".join(parts).strip()
+        detected = getattr(info, "language", None) or language or "auto"
+        if _looks_usable(text):
+            logger.info(
+                "faster-whisper transcribed %s (%s chars, lang=%s)",
+                path.name,
+                len(text),
+                detected,
+            )
+            return text
+        logger.warning("faster-whisper returned weak text for %s", path.name)
+        return None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("faster-whisper failed: %s", exc)
+        return None
+
+
+def _transcribe_google_fallback(path: Path, hint_text: str | None = None) -> str | None:
+    """Last resort — low quality, but better than empty."""
     try:
         import speech_recognition as sr
         from pydub import AudioSegment
-    except ImportError as exc:
-        logger.warning("SpeechRecognition/pydub missing: %s", exc)
+    except ImportError:
         return None
 
     try:
         audio = AudioSegment.from_file(path)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to read audio %s: %s", path, exc)
+        logger.warning("Google fallback could not read audio: %s", exc)
         return None
 
-    # Mono 16kHz WAV is what the free recognizer expects.
     audio = audio.set_channels(1).set_frame_rate(16000)
-    # Keep clips shorter for more reliable free Google recognition.
     if len(audio) > 90_000:
         audio = audio[:90_000]
 
-    recognizer = sr.Recognizer()
-    recognizer.energy_threshold = 200
-    chunk_ms = 40_000
-    parts: list[str] = []
-    language_order = (language,) if language else _hint_languages(hint_text)
-    detected_language = language or ""
+    language = {
+        "ru": "ru-RU",
+        "en": "en-US",
+        "uk": "uk-UA",
+        "es": "es-ES",
+        "pt": "pt-BR",
+        "de": "de-DE",
+        "fr": "fr-FR",
+        "it": "it-IT",
+        "tr": "tr-TR",
+        "pl": "pl-PL",
+        "ar": "ar",
+        "hi": "hi-IN",
+        "id": "id-ID",
+        "ja": "ja-JP",
+        "ko": "ko-KR",
+        "zh": "zh-CN",
+    }.get(_hint_language_code(hint_text) or "", "en-US")
 
-    with tempfile.TemporaryDirectory(prefix="reelsai-chunks-") as tmp:
+    recognizer = sr.Recognizer()
+    parts: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="reelsai-google-") as tmp:
         tmp_path = Path(tmp)
-        for index, start in enumerate(range(0, len(audio), chunk_ms)):
-            chunk = audio[start : start + chunk_ms]
+        for index, start in enumerate(range(0, len(audio), 40_000)):
+            chunk = audio[start : start + 40_000]
             if len(chunk) < 800:
                 continue
             chunk_file = tmp_path / f"chunk-{index}.wav"
@@ -191,41 +259,41 @@ def transcribe_audio_file(
             try:
                 with sr.AudioFile(str(chunk_file)) as source:
                     data = recognizer.record(source)
-
-                if index == 0 and not detected_language:
-                    detected_language, text = _recognize_best(recognizer, data, language_order)
-                    if detected_language:
-                        language_order = (detected_language,) + tuple(
-                            code for code in language_order if code != detected_language
-                        )
-                        logger.info(
-                            "Detected speech language %s (%s chars)",
-                            detected_language,
-                            len(text),
-                        )
-                    if text:
-                        parts.append(text)
-                        continue
-
-                # Prefer detected language, then a couple of fallbacks.
-                try_langs = language_order[:4] if language_order else DETECT_LANGUAGES[:4]
-                text = _recognize_chunk(recognizer, data, try_langs)
-                if text:
-                    parts.append(text)
-            except sr.RequestError as exc:
-                logger.warning("Google speech request failed: %s", exc)
-                break
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Chunk transcription failed: %s", exc)
+                text = recognizer.recognize_google(data, language=language)
+                if text and text.strip():
+                    parts.append(text.strip())
+            except Exception:  # noqa: BLE001
                 continue
 
     result = " ".join(parts).strip()
-    if not result or _is_garbage(result):
+    if _looks_usable(result):
+        logger.info("Google fallback transcribed %s (%s chars)", path.name, len(result))
+        return result
+    return None
+
+
+def transcribe_audio_file(
+    path: Path,
+    language: str | None = None,
+    hint_text: str | None = None,
+) -> str | None:
+    """Transcribe spoken audio. `language` kept for API compat; auto-detect preferred."""
+    _ = language
+    if not path.exists():
         return None
-    logger.info(
-        "Transcribed %s (%s chars, lang=%s)",
-        path.name,
-        len(result),
-        detected_language or "unknown",
-    )
-    return result
+
+    for name, runner in (
+        ("groq", _transcribe_groq),
+        ("faster-whisper", _transcribe_faster_whisper),
+        ("google", _transcribe_google_fallback),
+    ):
+        try:
+            text = runner(path, hint_text=hint_text)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("%s STT crashed: %s", name, exc)
+            continue
+        if text:
+            return text
+
+    logger.warning("All STT providers failed for %s", path.name)
+    return None

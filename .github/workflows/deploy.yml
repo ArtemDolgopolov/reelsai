@@ -21,7 +21,7 @@ jobs:
       - Linux
       - X64
       - reelsai
-    timeout-minutes: 15
+    timeout-minutes: 35
 
     steps:
       - name: Check out source
@@ -39,10 +39,20 @@ jobs:
       - name: Ensure swap for small instance builds
         run: |
           if [ "$(swapon --show | wc -l)" -eq 0 ]; then
-            sudo fallocate -l 2G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+            sudo fallocate -l 3G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=3072
             sudo chmod 600 /swapfile
             sudo mkswap /swapfile
             sudo swapon /swapfile
+          else
+            # Grow existing tiny swap if needed.
+            SWAP_SIZE_MB="$(awk '/SwapTotal/ {print int($2/1024)}' /proc/meminfo)"
+            if [ "${SWAP_SIZE_MB:-0}" -lt 2500 ]; then
+              sudo swapoff /swapfile || true
+              sudo fallocate -l 3G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=3072
+              sudo chmod 600 /swapfile
+              sudo mkswap /swapfile
+              sudo swapon /swapfile
+            fi
           fi
           free -m
 
@@ -54,7 +64,7 @@ jobs:
 
       - name: Verify deployment
         run: |
-          for attempt in {1..24}; do
+          for attempt in {1..48}; do
             if curl --fail --silent --show-error http://127.0.0.1/api/health | grep --quiet '"status":"ok"'; then
               if curl --fail --silent --show-error http://127.0.0.1/ | grep --quiet "Reels Finder"; then
                 exit 0

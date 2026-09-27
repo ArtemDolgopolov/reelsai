@@ -18,5 +18,5 @@ def health(session: Session = Depends(get_session)) -> HealthResponse:
     return HealthResponse(
         status="ok" if database == "ok" else "degraded",
         database=database,
-        ingest="yt-dlp+speech",
+        ingest="yt-dlp+whisper",
     )
