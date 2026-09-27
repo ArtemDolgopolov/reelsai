@@ -195,9 +195,9 @@ function startSpeechPolling(reelId) {
   stopSpeechPolling()
   speechPolling.value = true
   let attempts = 0
-  speechPollTimer = window.setInterval(async () => {
+  const pollOnce = async () => {
     attempts += 1
-    if (attempts > 40 || currentPage.value !== 'detail' || selectedReel.value?.id !== reelId) {
+    if (attempts > 50 || currentPage.value !== 'detail' || selectedReel.value?.id !== reelId) {
       stopSpeechPolling()
       return
     }
@@ -209,7 +209,10 @@ function startSpeechPolling(reelId) {
     } catch {
       // Keep the skeleton until the next poll succeeds.
     }
-  }, 2500)
+  }
+  // First check quickly, then every 1.2s so finished analysis appears sooner.
+  void pollOnce()
+  speechPollTimer = window.setInterval(pollOnce, 1200)
 }
 
 async function copySection(section) {
@@ -414,12 +417,13 @@ function syncPageFromHash() {
 
 onMounted(async () => {
   window.addEventListener('hashchange', syncPageFromHash)
-  await Promise.all([loadHomeReels(), loadInitialCompetitor()])
-  // Same restore path as before: open the reel after boot, while detailLoading
-  // already prevents the empty "Рилс не выбран" flash.
   if (initialRoute.page === 'detail' && initialRoute.reelId) {
+    // Open the reel immediately — home discovery can take tens of seconds.
     await openReel(initialRoute.reelId, { syncHash: false })
+    void Promise.all([loadHomeReels(), loadInitialCompetitor()])
+    return
   }
+  await Promise.all([loadHomeReels(), loadInitialCompetitor()])
 })
 
 onBeforeUnmount(() => {

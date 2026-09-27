@@ -39,19 +39,20 @@ def _model_candidates(preferred: str | None = None) -> list[str]:
 
 
 def _retry_after_seconds(response: httpx.Response) -> float:
+    """Cap waits tightly — long sleeps make remix feel multi-minute."""
     header = response.headers.get("retry-after")
     if header:
         try:
-            return min(12.0, max(1.0, float(header)))
+            return min(2.5, max(0.4, float(header)))
         except ValueError:
             pass
     match = re.search(r"try again in\s+([0-9.]+)\s*s", response.text or "", flags=re.I)
     if match:
         try:
-            return min(12.0, max(1.0, float(match.group(1))))
+            return min(2.5, max(0.4, float(match.group(1))))
         except ValueError:
             pass
-    return 2.0
+    return 0.8
 
 
 def groq_chat(
@@ -66,74 +67,102 @@ def groq_chat(
     """
     Call Groq chat.
 
-    allow_wait=False (default): fail fast on 429 / try next model — safe for request threads.
-    allow_wait=True: short sleeps ok — use only from background workers.
+    allow_wait=False: fail fast / next model (request threads).
+    allow_wait=True: at most one short pause, then rotate models quickly.
     """
     api_key = _api_key()
     if not api_key:
         return None
 
     last_error = ""
+    waited_once = False
     for candidate in _model_candidates(model or DEFAULT_CHAT_MODEL):
-        attempts = 2 if allow_wait else 1
-        for attempt in range(attempts):
-            try:
-                response = httpx.post(
-                    GROQ_CHAT_URL,
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": candidate,
-                        "temperature": temperature,
-                        "max_tokens": max_tokens,
-                        "messages": [
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": user},
-                        ],
-                    },
-                    timeout=45.0,
-                )
-                if response.status_code == 429:
-                    last_error = f"HTTP 429: {response.text[:240]}"
-                    if allow_wait and attempt + 1 < attempts:
-                        wait_s = _retry_after_seconds(response)
-                        logger.warning(
-                            "Groq chat rate-limited on %s, sleeping %.1fs",
-                            candidate,
-                            wait_s,
+        try:
+            response = httpx.post(
+                GROQ_CHAT_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": candidate,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                },
+                timeout=25.0,
+            )
+            if response.status_code == 429:
+                last_error = f"HTTP 429: {response.text[:240]}"
+                if allow_wait and not waited_once:
+                    wait_s = _retry_after_seconds(response)
+                    waited_once = True
+                    logger.warning(
+                        "Groq chat rate-limited on %s, brief sleep %.1fs then rotate",
+                        candidate,
+                        wait_s,
+                    )
+                    time.sleep(wait_s)
+                    # Retry the same model once after the short pause.
+                    response = httpx.post(
+                        GROQ_CHAT_URL,
+                        headers={
+                            "Authorization": f"Bearer {api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": candidate,
+                            "temperature": temperature,
+                            "max_tokens": max_tokens,
+                            "messages": [
+                                {"role": "system", "content": system},
+                                {"role": "user", "content": user},
+                            ],
+                        },
+                        timeout=25.0,
+                    )
+                    if response.status_code < 400:
+                        payload = response.json()
+                        content = (
+                            (
+                                ((payload.get("choices") or [{}])[0].get("message") or {}).get(
+                                    "content"
+                                )
+                                or ""
+                            ).strip()
                         )
-                        time.sleep(wait_s)
-                        continue
-                    logger.warning("Groq chat rate-limited on %s, trying next model", candidate)
-                    break
+                        if content:
+                            return content
+                logger.warning("Groq chat rate-limited on %s, trying next model", candidate)
+                continue
 
-                if response.status_code >= 400:
-                    last_error = f"HTTP {response.status_code}: {response.text[:240]}"
-                    body = (response.text or "").lower()
-                    if response.status_code in {400, 404} and (
-                        "decommission" in body
-                        or "does not exist" in body
-                        or "model_not_found" in body
-                    ):
-                        logger.warning("Groq chat model %s unavailable: %s", candidate, last_error)
-                        break
-                    logger.warning("Groq chat %s failed: %s", candidate, last_error)
-                    return None
+            if response.status_code >= 400:
+                last_error = f"HTTP {response.status_code}: {response.text[:240]}"
+                body = (response.text or "").lower()
+                if response.status_code in {400, 404} and (
+                    "decommission" in body
+                    or "does not exist" in body
+                    or "model_not_found" in body
+                ):
+                    logger.warning("Groq chat model %s unavailable: %s", candidate, last_error)
+                    continue
+                logger.warning("Groq chat %s failed: %s", candidate, last_error)
+                return None
 
-                payload = response.json()
-                content = (
-                    (((payload.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
-                    .strip()
-                )
-                if content:
-                    return content
-                break
-            except Exception as exc:  # noqa: BLE001
-                last_error = str(exc)
-                logger.warning("Groq chat failed with %s: %s", candidate, exc)
-                break
+            payload = response.json()
+            content = (
+                (((payload.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+                .strip()
+            )
+            if content:
+                return content
+        except Exception as exc:  # noqa: BLE001
+            last_error = str(exc)
+            logger.warning("Groq chat failed with %s: %s", candidate, exc)
+            continue
 
     if last_error:
         logger.warning("Groq chat exhausted models: %s", last_error)
@@ -181,11 +210,11 @@ def analyze_reel_bundle(
     spoken = (transcript or "").strip()
     context_bits: list[str] = []
     if spoken:
-        context_bits.append(f"Расшифровка речи:\n{spoken[:2200]}")
+        context_bits.append(f"Расшифровка речи:\n{spoken[:1400]}")
     if caption:
-        context_bits.append(f"Подпись Instagram:\n{caption[:800]}")
+        context_bits.append(f"Подпись Instagram:\n{caption[:500]}")
     if title:
-        context_bits.append(f"Заголовок:\n{title[:300]}")
+        context_bits.append(f"Заголовок:\n{title[:200]}")
     if not context_bits:
         return None
 
@@ -193,7 +222,7 @@ def analyze_reel_bundle(
     system = (
         "Ты редактор Reels-аналитики и сценарист коротких вертикальных видео. "
         f"Верни ТОЛЬКО JSON-объект с ключами {keys}. "
-        "overview — 2–4 коротких абзаца по-русски: что происходит в ролике и о чём он "
+        "overview — 2–3 коротких абзаца по-русски: что происходит в ролике и о чём он "
         "(стиль ChatGPT, без дословной расшифровки, без markdown и без списков). "
         "hook — цепляющее начало (1–2 предложения, до 200 символов), язык как в речи. "
         "script — основной текст СПЛОШНЯКОМ одним абзацем без нумерации 1. 2. 3. и без переносов-списков. "
@@ -213,8 +242,8 @@ def analyze_reel_bundle(
     raw = groq_chat(
         system=system,
         user=user,
-        temperature=0.25,
-        max_tokens=1100,
+        temperature=0.2,
+        max_tokens=750,
         allow_wait=allow_wait,
     )
     if not raw:
@@ -252,18 +281,18 @@ def explain_reel_in_russian(
     spoken = (transcript or "").strip()
     context_bits: list[str] = []
     if spoken:
-        context_bits.append(f"Расшифровка речи:\n{spoken[:2200]}")
+        context_bits.append(f"Расшифровка речи:\n{spoken[:1400]}")
     if caption:
-        context_bits.append(f"Подпись Instagram:\n{caption[:800]}")
+        context_bits.append(f"Подпись Instagram:\n{caption[:500]}")
     if title:
-        context_bits.append(f"Заголовок:\n{title[:300]}")
+        context_bits.append(f"Заголовок:\n{title[:200]}")
     if not context_bits:
         return None
 
     system = (
         "Ты редактор Reels-аналитики. Пиши по-русски, ясно и по делу, в стиле ответа ChatGPT. "
         "Объясни, что происходит в ролике и о чём он, без дословной расшифровки. "
-        "Не копируй длинные куски речи. 2–4 коротких абзаца. Без markdown-заголовков и без списков."
+        "Не копируй длинные куски речи. 2–3 коротких абзаца. Без markdown-заголовков и без списков."
     )
     user = (
         f"Автор: {author} ({handle})\n"
@@ -275,8 +304,8 @@ def explain_reel_in_russian(
     return groq_chat(
         system=system,
         user=user,
-        temperature=0.35,
-        max_tokens=550,
+        temperature=0.3,
+        max_tokens=450,
         allow_wait=allow_wait,
     )
 
