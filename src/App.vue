@@ -32,22 +32,27 @@ const pages = ['home', 'competitors', 'detail']
 
 function parseLocationHash() {
   const raw = window.location.hash.replace(/^#/, '').trim()
-  if (!raw) return { page: 'home', reelId: null }
+  if (!raw) return { page: 'home', reelId: null, competitorId: null }
   const [pagePart, ...rest] = raw.split('/')
   const page = pages.includes(pagePart) ? pagePart : 'home'
   const reelId = page === 'detail' && rest[0] ? rest[0] : null
-  return { page, reelId }
+  const competitorId = page === 'competitors' && rest[0] ? rest[0] : null
+  return { page, reelId, competitorId }
 }
 
 const initialRoute = parseLocationHash()
 const currentPage = ref(initialRoute.page)
 const searchQuery = ref('')
 const competitorHandle = ref('')
+const competitorsList = ref([])
 const competitor = ref(null)
 const competitorReels = ref([])
 const competitorMessage = ref('')
 const competitorLoading = ref(false)
+const competitorOpening = ref(false)
 const competitorAvatarBroken = ref(false)
+const competitorListAvatarBroken = ref({})
+const selectedCompetitorId = ref(initialRoute.competitorId)
 const homeReels = ref([])
 const homeLoading = ref(true)
 const selectedReel = ref(null)
@@ -153,6 +158,18 @@ function formatFollowers(count) {
   return formatViews(count)
 }
 
+function formatRelativeTime(value) {
+  if (!value) return 'обновлено'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'обновлено'
+  const diffSec = Math.round((Date.now() - date.getTime()) / 1000)
+  if (diffSec < 90) return 'только что'
+  if (diffSec < 3600) return `${Math.max(1, Math.round(diffSec / 60))} мин назад`
+  if (diffSec < 86400) return `${Math.max(1, Math.round(diffSec / 3600))} ч назад`
+  if (diffSec < 86400 * 7) return `${Math.max(1, Math.round(diffSec / 86400))} дн назад`
+  return 'обновлено'
+}
+
 function competitorInitial(person) {
   const name = (person?.full_name || person?.username || '?').trim()
   return name.slice(0, 1).toUpperCase()
@@ -182,17 +199,27 @@ function onThumbError(event) {
   if (poster) poster.classList.add('thumb-missing')
 }
 
-function navigate(page, reelId = null) {
+function navigate(page, id = null) {
   currentPage.value = page
-  const nextHash =
-    page === 'detail' && reelId ? `detail/${reelId}` : page
+  let nextHash = page
+  if (page === 'detail' && id) nextHash = `detail/${id}`
+  if (page === 'competitors' && id) nextHash = `competitors/${id}`
   if (window.location.hash.replace(/^#/, '') !== nextHash) {
     window.location.hash = nextHash
   }
-  if (page !== 'detail') {
+  if (page === 'home') {
     stopSpeechPolling()
     selectedReel.value = null
     editingSection.value = null
+    selectedCompetitorId.value = null
+  }
+  if (page === 'competitors' && !id) {
+    selectedCompetitorId.value = null
+    competitor.value = null
+    competitorReels.value = []
+  }
+  if (page === 'detail') {
+    selectedCompetitorId.value = null
   }
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
@@ -304,23 +331,9 @@ async function openReel(reelId, { syncHash = true } = {}) {
 }
 
 async function loadInitialCompetitor() {
-  try {
-    const response = await fetch('/api/competitors', { cache: 'no-store' })
-    if (!response.ok) return
-    const competitors = await response.json()
-    if (!competitors.length) return
-
-    competitor.value = competitors[0]
-    // Keep the input empty — placeholder shows @username until the user types.
-    const reelsResponse = await fetch(
-      `/api/competitors/${competitors[0].id}/reels`,
-      { cache: 'no-store' },
-    )
-    if (reelsResponse.ok) competitorReels.value = await reelsResponse.json()
-    competitorMessage.value = 'Загружено из PostgreSQL'
-    competitorAvatarBroken.value = false
-  } catch {
-    // The main feed still remains usable if the optional profile request fails.
+  await loadCompetitorsList()
+  if (initialRoute.page === 'competitors' && initialRoute.competitorId) {
+    await openCompetitor(initialRoute.competitorId, { syncHash: false })
   }
 }
 
@@ -346,29 +359,13 @@ async function loadCompetitor(forceRefresh = false) {
       throw new Error(detail || 'Не удалось загрузить конкурента')
     }
 
-    competitor.value = body.competitor
-    competitorReels.value = body.reels
-    competitorMessage.value = body.message
-    competitorAvatarBroken.value = false
-    await loadHomeReels()
-
-    // Speech transcripts arrive in the background — refresh once shortly after.
-    if (body.source === 'free' || String(body.message || '').includes('фоне')) {
-      window.setTimeout(async () => {
-        try {
-          const reelsResponse = await fetch(
-            `/api/competitors/${body.competitor.id}/reels`,
-            { cache: 'no-store' },
-          )
-          if (reelsResponse.ok) {
-            competitorReels.value = await reelsResponse.json()
-            competitorMessage.value = 'Рилсы готовы. Расшифровка речи обновлена, где удалось.'
-          }
-        } catch {
-          // Keep the already-shown reels if the quiet refresh fails.
-        }
-      }, 25000)
-    }
+    competitorHandle.value = ''
+    competitorMessage.value = body.message || 'Конкурент сохранён в списке'
+    await loadCompetitorsList()
+    // Stay on the list — user opens reels via «Открыть».
+    selectedCompetitorId.value = null
+    competitor.value = null
+    competitorReels.value = []
   } catch (error) {
     saveError.value = error.message
     competitorMessage.value = ''
@@ -429,7 +426,7 @@ async function saveSection(section) {
 }
 
 function syncPageFromHash() {
-  const { page, reelId } = parseLocationHash()
+  const { page, reelId, competitorId } = parseLocationHash()
   currentPage.value = page
   if (page === 'detail' && reelId) {
     if (selectedReel.value?.id !== reelId && !detailLoading.value) {
@@ -437,10 +434,71 @@ function syncPageFromHash() {
     }
     return
   }
-  if (page !== 'detail') {
-    stopSpeechPolling()
-    selectedReel.value = null
-    editingSection.value = null
+  if (page === 'competitors') {
+    selectedCompetitorId.value = competitorId
+    if (competitorId) {
+      if (competitor.value?.id !== competitorId && !competitorOpening.value) {
+        openCompetitor(competitorId, { syncHash: false })
+      }
+    } else {
+      competitor.value = null
+      competitorReels.value = []
+      void loadCompetitorsList()
+    }
+    return
+  }
+  stopSpeechPolling()
+  selectedReel.value = null
+  editingSection.value = null
+  selectedCompetitorId.value = null
+}
+
+async function loadCompetitorsList() {
+  try {
+    const response = await fetch('/api/competitors', { cache: 'no-store' })
+    if (!response.ok) return
+    competitorsList.value = await response.json()
+  } catch {
+    // Keep the last known list if refresh fails.
+  }
+}
+
+async function openCompetitor(competitorId, { syncHash = true } = {}) {
+  if (!competitorId) return
+  competitorOpening.value = true
+  competitorAvatarBroken.value = false
+  saveError.value = ''
+  selectedCompetitorId.value = competitorId
+  if (syncHash) navigate('competitors', competitorId)
+  else currentPage.value = 'competitors'
+
+  try {
+    const [profileResponse, reelsResponse] = await Promise.all([
+      fetch(`/api/competitors/${competitorId}`, { cache: 'no-store' }),
+      fetch(`/api/competitors/${competitorId}/reels`, { cache: 'no-store' }),
+    ])
+    if (!profileResponse.ok) throw new Error('Не удалось открыть конкурента')
+    competitor.value = await profileResponse.json()
+    competitorReels.value = reelsResponse.ok ? await reelsResponse.json() : []
+    competitorMessage.value = `Показаны ${competitorReels.value.length} рилсов`
+  } catch (error) {
+    saveError.value = error.message
+    competitor.value = null
+    competitorReels.value = []
+  } finally {
+    competitorOpening.value = false
+  }
+}
+
+function backToCompetitorsList() {
+  navigate('competitors')
+  void loadCompetitorsList()
+}
+
+function onListAvatarError(competitorId) {
+  competitorListAvatarBroken.value = {
+    ...competitorListAvatarBroken.value,
+    [competitorId]: true,
   }
 }
 
@@ -575,115 +633,180 @@ onBeforeUnmount(() => {
       <section v-else-if="currentPage === 'competitors'" class="page competitors-page">
         <header class="page-header">
           <div>
-            <span class="eyebrow">Исследование ниши</span>
             <h1>Конкуренты</h1>
-            <p>Загрузите Instagram-аккаунт и изучите его лучшие форматы.</p>
+            <p>Анализируйте рилсы конкурентов и находите рабочие механики</p>
           </div>
         </header>
 
-        <div class="competitor-loader">
-          <label>
-            <Camera :size="20" />
-            <input
-              v-model="competitorHandle"
-              type="text"
-              placeholder="@username"
-              aria-label="Instagram username"
-              autocomplete="off"
-              spellcheck="false"
-            />
-          </label>
-          <button
-            class="primary-button"
-            type="button"
-            :disabled="competitorLoading || !competitorHandle.trim()"
-            @click="loadCompetitor(false)"
-          >
-            {{ competitorLoading ? 'Загружаем…' : 'Загрузить' }}
-            <ArrowUpRight :size="17" />
-          </button>
-          <button
-            class="ghost-button"
-            type="button"
-            :disabled="competitorLoading || !competitorHandle.trim()"
-            @click="loadCompetitor(true)"
-            title="Заново распознать речь с автоопределением языка"
-          >
-            Обновить речь
-          </button>
-        </div>
-
-        <template v-if="competitor">
-          <article class="profile-card">
-            <div class="profile-main">
-              <img
-                v-if="competitor.avatar_url && !competitorAvatarBroken"
-                class="profile-avatar"
-                :src="thumbSrc(competitor.avatar_url)"
-                :alt="competitor.full_name || competitor.username"
-                referrerpolicy="no-referrer"
-                @error="onCompetitorAvatarError"
+        <template v-if="!selectedCompetitorId">
+          <div class="competitors-list-view">
+          <div class="competitor-loader">
+            <span class="competitor-loader-label">Instagram аккаунт или URL</span>
+            <label class="competitor-loader-field">
+              <Camera :size="18" />
+              <input
+                v-model="competitorHandle"
+                type="text"
+                placeholder="@username"
+                aria-label="Instagram аккаунт или URL"
+                autocomplete="off"
+                spellcheck="false"
+                @keydown.enter.prevent="loadCompetitor(false)"
               />
-              <span v-else class="profile-avatar profile-avatar-fallback" aria-hidden="true">
-                {{ competitorInitial(competitor) }}
-              </span>
-              <div>
-                <strong>{{ competitor.full_name || competitor.username }}</strong>
-                <span>@{{ competitor.username }}</span>
-                <p class="preserve-lines">{{ competitor.bio }}</p>
-              </div>
-            </div>
-            <div class="profile-stats">
-              <span><strong>{{ competitor.posts_count }}</strong><small>публикации</small></span>
-              <span><strong>{{ formatFollowers(competitor.followers_count) }}</strong><small>подписчики</small></span>
-              <span><strong>{{ competitor.following_count }}</strong><small>подписки</small></span>
-            </div>
-          </article>
-
-          <div class="results-heading">
-            <div>
-              <h2>Найдено {{ competitorReels.length }} последних рилсов</h2>
-              <p>Отсортировано по просмотрам</p>
-            </div>
-            <span class="success-badge"><Check :size="14" /> {{ competitorMessage || 'Готово' }}</span>
-          </div>
-
-          <div class="compact-reels-grid">
-            <article
-              v-for="reel in competitorReels"
-              :key="reel.id"
-              class="compact-reel"
+            </label>
+            <button
+              class="primary-button competitor-loader-submit"
+              type="button"
+              :disabled="competitorLoading || !competitorHandle.trim()"
+              @click="loadCompetitor(false)"
             >
-              <button class="compact-poster" type="button" @click="openReel(reel.id)">
-                <img
-                  v-if="reel.thumbnail_url"
-                  :src="thumbSrc(reel.thumbnail_url)"
-                  :alt="reel.title"
-                  loading="lazy"
-                  referrerpolicy="no-referrer"
-                  @error="onThumbError"
-                />
-                <span class="duration"><Play :size="9" fill="currentColor" /> {{ reel.duration }}</span>
-              </button>
-              <button class="compact-title" type="button" @click="openReel(reel.id)">
-                <strong>{{ reel.title }}</strong>
-              </button>
-              <div class="compact-stats">
-                <span>{{ formatViews(reel.views_count) }} views</span>
-                <span>{{ formatViews(reel.likes_count) }} likes</span>
-              </div>
-              <a
-                v-if="reel.instagram_url"
-                class="open-original-chip"
-                :href="reel.instagram_url"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <ExternalLink :size="12" />
-                Оригинал
-              </a>
-            </article>
+              {{ competitorLoading ? 'Загружаем…' : 'Загрузить 20 рилсов' }}
+              <ArrowUpRight :size="17" />
+            </button>
           </div>
+
+          <div v-if="competitorMessage || saveError" class="competitor-feedback">
+            <span v-if="competitorMessage" class="success-badge"><Check :size="14" /> {{ competitorMessage }}</span>
+            <span v-if="saveError" class="save-notice error"><CircleHelp :size="14" /> {{ saveError }}</span>
+          </div>
+
+          <div class="competitors-section">
+            <h2>Загруженные конкуренты</h2>
+
+            <div v-if="competitorsList.length" class="competitors-list">
+              <article
+                v-for="item in competitorsList"
+                :key="item.id"
+                class="competitor-row"
+              >
+                <div class="competitor-row-main">
+                  <img
+                    v-if="item.avatar_url && !competitorListAvatarBroken[item.id]"
+                    class="profile-avatar competitor-row-avatar"
+                    :src="thumbSrc(item.avatar_url)"
+                    :alt="item.full_name || item.username"
+                    referrerpolicy="no-referrer"
+                    @error="onListAvatarError(item.id)"
+                  />
+                  <span v-else class="profile-avatar competitor-row-avatar profile-avatar-fallback" aria-hidden="true">
+                    {{ competitorInitial(item) }}
+                  </span>
+                  <div class="competitor-row-meta">
+                    <strong>@{{ item.username }}</strong>
+                    <span>Загружено рилсов: {{ item.reels_count ?? 0 }}</span>
+                  </div>
+                </div>
+                <div class="competitor-row-aside">
+                  <time class="competitor-row-time">{{ formatRelativeTime(item.last_scraped_at || item.updated_at) }}</time>
+                  <button
+                    class="ghost-button competitor-open-button"
+                    type="button"
+                    @click="openCompetitor(item.id)"
+                  >
+                    Открыть
+                  </button>
+                </div>
+              </article>
+            </div>
+
+            <div v-else class="empty-state competitors-empty">
+              <Users :size="30" />
+              <strong>Список конкурентов пуст</strong>
+              <span>Введите @username выше и загрузите 20 рилсов</span>
+            </div>
+          </div>
+          </div>
+        </template>
+
+        <template v-else>
+          <button class="back-button" type="button" @click="backToCompetitorsList">
+            <ArrowLeft :size="17" />
+            К списку конкурентов
+          </button>
+
+          <div v-if="competitorOpening || !competitor" class="empty-state detail-boot">
+            <LoaderCircle :size="28" class="spin" />
+            <strong>{{ competitorOpening ? 'Открываем рилсы…' : (saveError || 'Конкурент не найден') }}</strong>
+          </div>
+
+          <template v-else>
+            <article class="profile-card">
+              <div class="profile-main">
+                <img
+                  v-if="competitor.avatar_url && !competitorAvatarBroken"
+                  class="profile-avatar"
+                  :src="thumbSrc(competitor.avatar_url)"
+                  :alt="competitor.full_name || competitor.username"
+                  referrerpolicy="no-referrer"
+                  @error="onCompetitorAvatarError"
+                />
+                <span v-else class="profile-avatar profile-avatar-fallback" aria-hidden="true">
+                  {{ competitorInitial(competitor) }}
+                </span>
+                <div>
+                  <strong>{{ competitor.full_name || competitor.username }}</strong>
+                  <span>@{{ competitor.username }}</span>
+                  <p class="preserve-lines">{{ competitor.bio }}</p>
+                </div>
+              </div>
+              <div class="profile-stats">
+                <span><strong>{{ competitor.posts_count }}</strong><small>публикации</small></span>
+                <span><strong>{{ formatFollowers(competitor.followers_count) }}</strong><small>подписчики</small></span>
+                <span><strong>{{ competitor.following_count }}</strong><small>подписки</small></span>
+              </div>
+            </article>
+
+            <div class="results-heading">
+              <div>
+                <h2>{{ competitorReels.length }} рилсов</h2>
+                <p>До 20 штук, отсортировано по просмотрам</p>
+              </div>
+              <span class="success-badge"><Check :size="14" /> {{ competitorMessage || 'Готово' }}</span>
+            </div>
+
+            <div v-if="competitorReels.length" class="compact-reels-grid">
+              <article
+                v-for="reel in competitorReels"
+                :key="reel.id"
+                class="compact-reel"
+              >
+                <button class="compact-poster" type="button" @click="openReel(reel.id)">
+                  <img
+                    v-if="reel.thumbnail_url"
+                    :src="thumbSrc(reel.thumbnail_url)"
+                    :alt="reel.title"
+                    loading="lazy"
+                    referrerpolicy="no-referrer"
+                    @error="onThumbError"
+                  />
+                  <span class="duration"><Play :size="9" fill="currentColor" /> {{ reel.duration }}</span>
+                </button>
+                <button class="compact-title" type="button" @click="openReel(reel.id)">
+                  <strong>{{ reel.title }}</strong>
+                </button>
+                <div class="compact-stats">
+                  <span>{{ formatViews(reel.views_count) }} views</span>
+                  <span>{{ formatViews(reel.likes_count) }} likes</span>
+                </div>
+                <a
+                  v-if="reel.instagram_url"
+                  class="open-original-chip"
+                  :href="reel.instagram_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <ExternalLink :size="12" />
+                  Оригинал
+                </a>
+              </article>
+            </div>
+
+            <div v-else class="empty-state">
+              <Search :size="30" />
+              <strong>Рилсов пока нет</strong>
+              <span>Попробуйте добавить аккаунт ещё раз</span>
+            </div>
+          </template>
         </template>
       </section>
 

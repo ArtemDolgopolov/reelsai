@@ -16,6 +16,8 @@ class CompetitorRead(BaseModel):
     posts_count: int
     followers_count: int
     following_count: int
+    reels_count: int = 0
+    tracked: bool = False
     status: CompetitorStatus
     last_error: Optional[str] = None
     last_scraped_at: Optional[datetime] = None

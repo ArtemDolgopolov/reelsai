@@ -189,8 +189,15 @@ def backfill_missing_transcripts() -> None:
 
 @router.get("", response_model=list[CompetitorRead])
 def list_competitors(session: Session = Depends(get_session)) -> list[CompetitorRead]:
-    competitors = session.exec(select(Competitor).order_by(col(Competitor.updated_at).desc())).all()
-    return [competitor_to_read(item) for item in competitors]
+    competitors = session.exec(
+        select(Competitor)
+        .where(Competitor.tracked.is_(True))
+        .order_by(col(Competitor.updated_at).desc())
+    ).all()
+    return [
+        competitor_to_read(item, reels_count=len(get_latest_reels(session, item.id)))
+        for item in competitors
+    ]
 
 
 @router.get("/{competitor_id}", response_model=CompetitorRead)
@@ -198,7 +205,10 @@ def get_competitor(competitor_id: UUID, session: Session = Depends(get_session))
     competitor = session.get(Competitor, competitor_id)
     if competitor is None:
         raise HTTPException(status_code=404, detail="Competitor not found")
-    return competitor_to_read(competitor)
+    return competitor_to_read(
+        competitor,
+        reels_count=len(get_latest_reels(session, competitor_id)),
+    )
 
 
 @router.get("/{competitor_id}/reels", response_model=list[ReelListItem])
@@ -238,11 +248,15 @@ async def load_competitor(
         and not payload.force_refresh
         and datetime.now(timezone.utc) - existing_competitor.last_scraped_at < CACHE_TTL
     ):
+        existing_competitor.tracked = True
+        session.add(existing_competitor)
+        session.commit()
+        session.refresh(existing_competitor)
         needs_speech = any(not looks_like_real_transcript(reel.transcript) for reel in existing_reels)
         if needs_speech:
             background_tasks.add_task(_background_transcribe, existing_competitor.id)
         return CompetitorLoadResponse(
-            competitor=competitor_to_read(existing_competitor),
+            competitor=competitor_to_read(existing_competitor, reels_count=len(existing_reels)),
             reels=[reel_to_list_item(reel, existing_competitor.username) for reel in existing_reels],
             source="cache",
             message=(
@@ -257,8 +271,12 @@ async def load_competitor(
     except InstagramFreeError as exc:
         # Never substitute another creator / seed demo for the requested handle.
         if existing_competitor is not None and existing_reels:
+            existing_competitor.tracked = True
+            session.add(existing_competitor)
+            session.commit()
+            session.refresh(existing_competitor)
             return CompetitorLoadResponse(
-                competitor=competitor_to_read(existing_competitor),
+                competitor=competitor_to_read(existing_competitor, reels_count=len(existing_reels)),
                 reels=[
                     reel_to_list_item(reel, existing_competitor.username) for reel in existing_reels
                 ],
@@ -278,6 +296,7 @@ async def load_competitor(
     competitor.followers_count = data.followers_count or competitor.followers_count
     competitor.following_count = data.following_count or competitor.following_count
     competitor.status = CompetitorStatus.ready
+    competitor.tracked = True
     competitor.last_error = None
     competitor.apify_run_id = None
     competitor.last_scraped_at = datetime.now(timezone.utc)
@@ -293,7 +312,7 @@ async def load_competitor(
 
     reels = get_latest_reels(session, competitor.id)
     return CompetitorLoadResponse(
-        competitor=competitor_to_read(competitor),
+        competitor=competitor_to_read(competitor, reels_count=len(reels)),
         reels=[reel_to_list_item(reel, competitor.username) for reel in reels],
         source="free",
         message=(

@@ -24,8 +24,9 @@ def format_views(count: int) -> str:
     return str(count)
 
 
-def competitor_to_read(competitor: Competitor) -> CompetitorRead:
-    return CompetitorRead.model_validate(competitor, from_attributes=True)
+def competitor_to_read(competitor: Competitor, *, reels_count: int = 0) -> CompetitorRead:
+    payload = CompetitorRead.model_validate(competitor, from_attributes=True)
+    return payload.model_copy(update={"reels_count": reels_count})
 
 
 def reel_to_list_item(reel: Reel, username: str) -> ReelListItem:

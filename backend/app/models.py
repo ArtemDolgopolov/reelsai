@@ -32,6 +32,7 @@ class Competitor(SQLModel, table=True):
     posts_count: int = Field(default=0)
     followers_count: int = Field(default=0)
     following_count: int = Field(default=0)
+    tracked: bool = Field(default=False, index=True)
     status: CompetitorStatus = Field(default=CompetitorStatus.pending)
     last_error: Optional[str] = Field(default=None, sa_column=Column(Text))
     apify_run_id: Optional[str] = Field(default=None, max_length=100)
