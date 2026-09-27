@@ -36,6 +36,20 @@ _PLACEHOLDER_MARKERS = (
     "пока мало контекста",
     "ниже — стартовые",
     "ниже — рабочие заготовки",
+    "кратко по речи автора",
+)
+
+_TOPIC_HINTS = (
+    (r"\bfigma\b", "дизайн в Figma"),
+    (r"\b(website|websites|сайт|лендинг)\b", "сборку сайта"),
+    (r"\b(ai|chatgpt|claude|cursor|нейросет)\b", "AI-инструменты"),
+    (r"\b(python|code|coding|код|программ)\b", "код и автоматизацию"),
+    (r"\b(scrape|парс|данные)\b", "сбор данных"),
+    (r"\b(reel|instagram|контент)\b", "контент и Reels"),
+    (r"\b(money|доход|заработ|business|бизнес)\b", "рост и монетизацию"),
+    (r"\b(fitness|workout|тренир)\b", "тренировки"),
+    (r"\b(recipe|cook|рецепт|готов)\b", "еду и рецепты"),
+    (r"\b(seedance|cloud code)\b", "генерацию сайта через AI"),
 )
 
 
@@ -51,13 +65,117 @@ def _clip(text: str, limit: int = 280) -> str:
     return f"{cut}…"
 
 
+def _latin_ratio(text: str) -> float:
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters:
+        return 0.0
+    latin = sum(1 for ch in letters if "a" <= ch.lower() <= "z")
+    return latin / len(letters)
+
+
 def _is_ai_overview(text: str | None) -> bool:
-    """True when overview looks like a real LLM explanation, not a loading stub."""
+    """True when overview looks like a real Russian explanation, not a stub/transcript dump."""
     cleaned = (text or "").strip()
     if len(cleaned) < 90:
         return False
     low = cleaned.lower()
-    return not any(marker in low for marker in _PLACEHOLDER_MARKERS)
+    if any(marker in low for marker in _PLACEHOLDER_MARKERS):
+        return False
+    # Drop transcript dumps pasted into the overview body.
+    body = re.sub(r"^разбираю рилс.*?(?:\n\n|$)", "", cleaned, count=1, flags=re.I | re.S)
+    if _latin_ratio(body) > 0.35:
+        return False
+    return True
+
+
+def _theme_labels(caption: str, title: str, spoken: str) -> list[str]:
+    blob = f"{title} {caption} {spoken[:800]}".lower()
+    found: list[str] = []
+    for pattern, label in _TOPIC_HINTS:
+        if re.search(pattern, blob, flags=re.I) and label not in found:
+            found.append(label)
+        if len(found) >= 3:
+            break
+    return found
+
+
+def _local_russian_explanation(
+    *,
+    author: str,
+    handle: str,
+    duration_label: str,
+    views_label: str,
+    spoken: str,
+    caption: str,
+    title: str,
+    has_speech: bool,
+) -> str:
+    """Conceptual RU summary without pasting transcript/script text."""
+    header = build_header(author, handle, duration_label, views_label)
+    themes = _theme_labels(caption, title, spoken)
+    if themes:
+        about = f"Этот рилс про {', '.join(themes)}."
+    elif caption and caption.lower() not in {title.lower(), "instagram reel"}:
+        about = f"Этот рилс про тему из описания: {_clip(caption, 110)}."
+    elif title and title.lower() != "instagram reel":
+        about = f"Этот рилс по заголовку про: {_clip(title, 110)}."
+    else:
+        about = "Этот рилс — практический разбор приёма автора для быстрого результата."
+
+    if has_speech:
+        flow = (
+            "По речи видно структуру: сначала сильный хук с обещанием результата, "
+            "затем пошаговый показ процесса, в финале — призыв к действию."
+        )
+    else:
+        flow = (
+            "По кадру и описанию ролик строится как короткая демонстрация: "
+            "внимание → процесс → призыв."
+        )
+    closer = (
+        "Ниже — Hook, сплошной Script и Call to Action для ремикса, "
+        "уже как структура, а не дословная расшифровка."
+    )
+    return "\n\n".join([header, f"{about} {flow}", closer])
+
+
+def offline_overview(
+    *,
+    author: str,
+    handle: str,
+    duration_label: str,
+    views_label: str,
+    spoken: str,
+    caption: str,
+    title: str,
+    has_speech: bool,
+    waiting: bool = False,
+) -> str:
+    if waiting:
+        return "\n\n".join(
+            [
+                build_header(author, handle, duration_label, views_label),
+                "Готовлю короткое объяснение: о чём рилс, что показывает автор и какой главный посыл. "
+                "Через пару секунд появится summary.",
+            ]
+        )
+    return _local_russian_explanation(
+        author=author,
+        handle=handle,
+        duration_label=duration_label,
+        views_label=views_label,
+        spoken=spoken,
+        caption=caption,
+        title=title,
+        has_speech=has_speech,
+    )
+
+
+def build_header(author: str, handle: str, duration_label: str, views_label: str) -> str:
+    return (
+        f"Разбираю рилс {author} ({handle}). "
+        f"Длительность {duration_label}, охват около {views_label} просмотров."
+    )
 
 
 def _cache_key(reel: Reel) -> str:
@@ -95,50 +213,6 @@ def store_cached_analysis(
         cta,
         from_llm,
     )
-
-
-def build_header(author: str, handle: str, duration_label: str, views_label: str) -> str:
-    return (
-        f"Разбираю рилс {author} ({handle}). "
-        f"Длительность {duration_label}, охват около {views_label} просмотров."
-    )
-
-
-def offline_overview(
-    *,
-    author: str,
-    handle: str,
-    duration_label: str,
-    views_label: str,
-    spoken: str,
-    caption: str,
-    title: str,
-    has_speech: bool,
-    waiting: bool = False,
-) -> str:
-    parts: list[str] = [build_header(author, handle, duration_label, views_label)]
-    if waiting and has_speech:
-        parts.append(
-            "По речи автора собираю объяснение и структуру ремикса: Hook, сплошной Script и Call to Action в финале. "
-            "Через пару секунд текст уточнится."
-        )
-    elif has_speech:
-        gist = _clip(spoken, 160)
-        parts.append(
-            f"Кратко по речи автора: {gist} "
-            "Ниже — Hook, сплошной Script и Call to Action для ремикса."
-        )
-    elif caption and caption.lower() not in {title.lower(), "instagram reel"}:
-        parts.append(f"По описанию тема ролика примерно: {_clip(caption, 220)}.")
-        parts.append("Ниже — стартовые Hook / Script / CTA, их можно копировать и править.")
-    elif title and title.lower() != "instagram reel":
-        parts.append(f"Судя по заголовку, ролик про: {_clip(title, 180)}.")
-        parts.append("Hook / Script / CTA ниже можно сразу копировать или отредактировать.")
-    else:
-        parts.append(
-            "Пока мало контекста. Ниже — рабочие заготовки Hook / Script / CTA, которые можно править вручную."
-        )
-    return "\n\n".join(parts)
 
 
 def _sections_look_structured(spoken: str, reel: Reel) -> bool:

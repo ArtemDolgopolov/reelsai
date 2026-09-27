@@ -5,7 +5,7 @@ from sqlmodel import Session
 from app.models import Competitor, Reel
 from app.schemas import CompetitorRead, ReelDetail, ReelListItem
 from app.services.instagram_free import looks_like_real_transcript
-from app.services.overview import enrich_reel_analysis
+from app.services.overview import _is_ai_overview, enrich_reel_analysis
 from app.services.transcript_sections import DEFAULT_CTA, continuous_text
 
 
@@ -74,13 +74,7 @@ def reel_to_detail(
     if cta and continuous_text(reel.cta) != continuous_text(cta):
         reel.cta = (cta or DEFAULT_CTA)[:500]
         changed = True
-    if (
-        overview
-        and overview != (reel.analysis_overview or "")
-        and "собираю объяснение" not in overview.lower()
-        and "через пару секунд" not in overview.lower()
-        and len(overview) > 90
-    ):
+    if overview and overview != (reel.analysis_overview or "") and _is_ai_overview(overview):
         reel.analysis_overview = overview[:4000]
         changed = True
     if changed and session is not None:
@@ -91,20 +85,23 @@ def reel_to_detail(
         except Exception:  # noqa: BLE001
             session.rollback()
 
-    # Prefer persisted AI overview when the live path still has a loading stub.
+    # Prefer persisted AI overview; drop transcript-dump overviews from DB.
     stored = (reel.analysis_overview or "").strip()
-    if stored and "собираю объяснение" not in stored.lower() and "через пару секунд" not in stored.lower():
-        stubby = (
-            "собираю объяснение" in (overview or "").lower()
-            or "через пару секунд" in (overview or "").lower()
-            or "собрал структуру ремикса" in (overview or "").lower()
-        )
-        if stubby or not overview:
+    if stored and not _is_ai_overview(stored):
+        if session is not None:
+            reel.analysis_overview = None
+            try:
+                session.add(reel)
+                session.commit()
+                session.refresh(reel)
+            except Exception:  # noqa: BLE001
+                session.rollback()
+        stored = ""
+    if stored and _is_ai_overview(stored):
+        if not _is_ai_overview(overview) or not overview:
             overview = stored
             analysis_pending = False
 
-    spoken = (reel.transcript or "").strip()
-    # None = STT not attempted yet; "" = attempted, no speech; text = ready.
     speech_pending = reel.transcript is None
     return ReelDetail(
         id=reel.id,

@@ -94,7 +94,9 @@ const isOverviewStub = computed(() => {
   return (
     text.includes('собираю объяснение') ||
     text.includes('через пару секунд') ||
-    text.includes('собираю разбор')
+    text.includes('собираю разбор') ||
+    text.includes('кратко по речи автора') ||
+    text.includes('готовлю короткое объяснение')
   )
 })
 
