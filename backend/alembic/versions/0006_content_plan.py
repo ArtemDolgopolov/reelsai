@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 revision: str = "0006_content_plan"
 down_revision: Union[str, Sequence[str], None] = "0005_competitor_tracked"
@@ -19,8 +20,8 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.create_table(
         "content_plan_items",
-        sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("reel_id", sa.Uuid(), nullable=False),
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("reel_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column(
             "shoot_status",
             sa.String(length=20),
