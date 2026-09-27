@@ -15,12 +15,26 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
-DEFAULT_CHAT_MODEL = "llama-3.1-8b-instant"
+# llama-3.1-8b-instant was decommissioned Aug 2026; gpt-oss-20b is the free replacement.
+DEFAULT_CHAT_MODEL = "openai/gpt-oss-20b"
+CHAT_MODEL_FALLBACKS = (
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-120b",
+)
 
 
 def _api_key() -> str:
     settings = get_settings()
     return (settings.groq_api_key or os.getenv("GROQ_API_KEY") or "").strip()
+
+
+def _model_candidates(preferred: str | None = None) -> list[str]:
+    ordered: list[str] = []
+    for name in (preferred, *CHAT_MODEL_FALLBACKS):
+        if name and name not in ordered:
+            ordered.append(name)
+    return ordered
 
 
 def groq_chat(
@@ -35,33 +49,53 @@ def groq_chat(
     if not api_key:
         return None
 
-    try:
-        response = httpx.post(
-            GROQ_CHAT_URL,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model or DEFAULT_CHAT_MODEL,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            },
-            timeout=45.0,
-        )
-        if response.status_code >= 400:
-            logger.warning("Groq chat HTTP %s: %s", response.status_code, response.text[:240])
-            return None
-        payload = response.json()
-        content = (((payload.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
-        return content or None
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Groq chat failed: %s", exc)
-        return None
+    last_error = ""
+    for candidate in _model_candidates(model or DEFAULT_CHAT_MODEL):
+        try:
+            response = httpx.post(
+                GROQ_CHAT_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": candidate,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                },
+                timeout=45.0,
+            )
+            if response.status_code >= 400:
+                last_error = f"HTTP {response.status_code}: {response.text[:240]}"
+                # Try next model on decommission / not found.
+                if response.status_code in {400, 404} and (
+                    "decommission" in response.text.lower()
+                    or "does not exist" in response.text.lower()
+                    or "model_not_found" in response.text.lower()
+                ):
+                    logger.warning("Groq chat model %s unavailable: %s", candidate, last_error)
+                    continue
+                logger.warning("Groq chat %s failed: %s", candidate, last_error)
+                return None
+            payload = response.json()
+            content = (
+                (((payload.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+                .strip()
+            )
+            if content:
+                return content
+        except Exception as exc:  # noqa: BLE001
+            last_error = str(exc)
+            logger.warning("Groq chat failed with %s: %s", candidate, exc)
+            continue
+
+    if last_error:
+        logger.warning("Groq chat exhausted models: %s", last_error)
+    return None
 
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:
@@ -131,6 +165,7 @@ def structure_remix_sections(transcript: str, caption: str | None = None) -> tup
         "hook — цепляющее начало (1–2 предложения, до 200 символов). "
         "script — основной текст ролика СПЛОШНЯКОМ одним абзацем без нумерации и без переносов-списков. "
         "cta — только финальный призыв к действию в самом конце (комментарий, подписка, сохранение, ссылка и т.п.). "
+        "Если в речи нет явного CTA, сформулируй короткий уместный призыв на языке речи. "
         "Не повторяй hook внутри script. Не оставляй куски сюжета внутри cta."
     )
     user = f"Расшифровка речи:\n{spoken[:3500]}"
@@ -147,6 +182,8 @@ def structure_remix_sections(transcript: str, caption: str | None = None) -> tup
     hook = re.sub(r"\s+", " ", str(data.get("hook") or "")).strip()[:200]
     script = re.sub(r"\s+", " ", str(data.get("script") or "")).strip()[:2000]
     cta = re.sub(r"\s+", " ", str(data.get("cta") or "")).strip()[:500]
+    # Drop accidental numbered list leftovers from the model.
+    script = re.sub(r"(?:(?<=^)|(?<=[.!?…]\s))\d{1,2}[.)]\s+", "", script).strip()
     if not hook or not script:
         return None
     return hook, script, cta

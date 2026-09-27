@@ -51,9 +51,10 @@ def build_reel_overview(reel: Reel, competitor: Competitor, *, views_label: str,
         f"Разбираю рилс {author} ({handle}). Длительность {duration_label}, охват около {views_label} просмотров."
     ]
     if has_speech:
+        gist = _clip(spoken, 180)
         parts.append(
-            "По речи автора это практичный ролик с конкретным инструментом или приёмом. "
-            "Ниже собрал Hook, Script и Call to Action для ремикса — без дословной простыни расшифровки."
+            f"По речи автора ролик roughly про следующее: {gist} "
+            "Ниже собрал Hook, Script и Call to Action для ремикса — уже как структуру, а не простыню расшифровки."
         )
     elif caption and caption.lower() not in {title.lower(), "instagram reel"}:
         parts.append(f"По описанию тема ролика roughly: {_clip(caption, 220)}.")

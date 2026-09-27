@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 
 from app.models import Competitor, Reel
@@ -26,24 +27,48 @@ def competitor_to_read(competitor: Competitor) -> CompetitorRead:
     return CompetitorRead.model_validate(competitor, from_attributes=True)
 
 
+def _needs_restructure(spoken: str, script: str | None, cta: str | None) -> bool:
+    stored_script = continuous_text(script)
+    stored_cta = continuous_text(cta)
+    if not stored_script or stored_script == continuous_text(spoken):
+        return True
+    if "\n" in (script or "") or re.search(r"(?m)^\d{1,2}[.)]\s+", script or ""):
+        return True
+    if len(stored_script) > len(spoken) * 0.98:
+        return True
+    # CTA should be a short action ask — story fragments need a fresh split.
+    if stored_cta and len(stored_cta.split()) > 22 and not any(
+        hint in stored_cta.lower()
+        for hint in (
+            "подпис",
+            "сохран",
+            "коммент",
+            "напиш",
+            "ссылк",
+            "follow",
+            "subscribe",
+            "comment",
+            "save",
+            "dm me",
+            "link",
+            "попробуй",
+        )
+    ):
+        return True
+    return False
+
+
 def analysis_sections(reel: Reel) -> tuple[str, str, str]:
     """Hook / Script / CTA: prefer spoken audio, otherwise caption-based drafts."""
     spoken = continuous_text(reel.transcript)
     caption = continuous_text(reel.caption or reel.title)
 
     if looks_like_real_transcript(spoken):
-        stored_script = continuous_text(reel.script)
-        # Re-structure legacy dumps / broken numbered scripts.
-        if (
-            not stored_script
-            or stored_script == spoken
-            or "\n" in (reel.script or "")
-            or len(stored_script) > len(spoken) * 0.98
-        ):
+        if _needs_restructure(spoken, reel.script, reel.cta):
             return split_transcript_into_sections(spoken, caption)
         return (
             continuous_text(reel.hook)[:200],
-            stored_script[:2000],
+            continuous_text(reel.script)[:2000],
             continuous_text(reel.cta)[:500] or split_transcript_into_sections(spoken, caption)[2],
         )
 

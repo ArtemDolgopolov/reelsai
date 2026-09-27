@@ -6,9 +6,12 @@ import re
 
 from app.services.groq_llm import structure_remix_sections
 
+# Phrase-level CTA signals only — bare "like" matches too much ordinary speech.
 CTA_HINTS = (
     "подпис",
-    "лайк",
+    "лайкните",
+    "лайкай",
+    "поставь лайк",
     "сохран",
     "коммент",
     "напиш",
@@ -17,26 +20,35 @@ CTA_HINTS = (
     "попробуй",
     "попробуйте",
     "переход",
-    "смотри",
     "жми",
     "follow",
-    "like",
-    "comment",
-    "save",
     "subscribe",
+    "comment",
+    "save this",
+    "save it",
     "link in bio",
     "check out",
     "dm me",
     "drop a",
     "comment down",
     "link below",
+    "hit like",
+    "like and",
+    "like this",
+    "give it a like",
+    "smash like",
 )
 
 DEFAULT_CTA = "Сохрани и попробуй этот формат в своём следующем рилсе."
 
 
 def continuous_text(text: str | None) -> str:
-    return re.sub(r"\s+", " ", (text or "").replace("\n", " ")).strip()
+    """Collapse whitespace and strip numbered list markers into one prose paragraph."""
+    cleaned = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    # "1. foo\n2. bar" or "1) foo" → plain sentences.
+    cleaned = re.sub(r"(?m)^\s*\d{1,2}[.)]\s+", "", cleaned)
+    cleaned = re.sub(r"(?<=[.!?…])\s*\d{1,2}[.)]\s+", " ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def _sentences(text: str) -> list[str]:
@@ -71,7 +83,12 @@ def split_transcript_into_sections(
     structured = structure_remix_sections(source, caption)
     if structured:
         hook, script, cta = structured
-        return hook, continuous_text(script), continuous_text(cta) or DEFAULT_CTA
+        script = continuous_text(script)
+        cta = continuous_text(cta)
+        if cta and not _looks_like_cta(cta) and len(cta.split()) > 18:
+            # Model returned story fragment as CTA — keep script, use default CTA.
+            cta = DEFAULT_CTA
+        return hook, script, cta or DEFAULT_CTA
 
     sentences = _sentences(source)
     words = source.split()
