@@ -63,6 +63,7 @@ class ReelDetail(BaseModel):
     cta: str
     transcript: Optional[str] = None
     speech_pending: bool = False
+    analysis_pending: bool = False
     why_it_works: Optional[str] = None
     posted_at: Optional[datetime] = None
     status: ReelStatus

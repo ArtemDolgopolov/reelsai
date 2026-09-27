@@ -55,14 +55,15 @@ def reel_to_detail(
 ) -> ReelDetail:
     duration = format_duration(reel.duration_seconds)
     views_label = format_views(reel.views_count)
-    overview, hook, script, cta = enrich_reel_analysis(
+    # Instant path — never block the request thread on Groq.
+    overview, hook, script, cta, analysis_pending = enrich_reel_analysis(
         reel,
         competitor,
         views_label=views_label,
         duration_label=duration,
+        sync_llm=False,
     )
 
-    # Persist structured sections so the next open skips Groq.
     changed = False
     if hook and continuous_text(reel.hook) != continuous_text(hook):
         reel.hook = hook[:200]
@@ -106,6 +107,7 @@ def reel_to_detail(
         cta=continuous_text(cta) or DEFAULT_CTA,
         transcript=reel.transcript,
         speech_pending=not looks_like_real_transcript(spoken),
+        analysis_pending=analysis_pending,
         why_it_works=reel.why_it_works,
         posted_at=reel.posted_at,
         status=reel.status,

@@ -157,7 +157,7 @@ function startSpeechPolling(reelId) {
       const body = await response.json()
       if (selectedReel.value?.id !== reelId) return
       selectedReel.value = body
-      if (!body.speech_pending) stopSpeechPolling()
+      if (!body.speech_pending && !body.analysis_pending) stopSpeechPolling()
     } catch {
       // Keep showing the instant overview while speech refinement continues.
     }
@@ -204,7 +204,9 @@ async function openReel(reelId) {
     const response = await fetch(`/api/reels/${reelId}`, { cache: 'no-store' })
     if (!response.ok) throw new Error('Не удалось открыть рилс')
     selectedReel.value = await response.json()
-    if (selectedReel.value?.speech_pending) startSpeechPolling(reelId)
+    if (selectedReel.value?.speech_pending || selectedReel.value?.analysis_pending) {
+      startSpeechPolling(reelId)
+    }
   } catch (error) {
     saveError.value = error.message
   } finally {
@@ -675,7 +677,10 @@ onBeforeUnmount(() => {
                     <strong>Reels AI</strong>
                     <small>Про что ролик</small>
                   </div>
-                  <span v-if="selectedReel.speech_pending || speechPolling" class="ai-status">Уточняю по речи…</span>
+                  <span
+                    v-if="selectedReel.speech_pending || selectedReel.analysis_pending || speechPolling"
+                    class="ai-status"
+                  >Уточняю по речи…</span>
                 </div>
                 <div class="ai-chat-body">
                   <p v-for="(paragraph, index) in overviewParagraphs" :key="index">{{ paragraph }}</p>

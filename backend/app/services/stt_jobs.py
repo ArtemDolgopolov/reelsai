@@ -129,6 +129,12 @@ def ensure_reel_transcript(session: Session, reel: Reel, competitor: Competitor 
             reel.external_id or reel.id,
             len(reel.transcript or ""),
         )
+        try:
+            from app.services.overview import schedule_analysis
+
+            schedule_analysis(reel.id)
+        except Exception as enrich_exc:  # noqa: BLE001
+            logger.warning("Could not schedule analysis after STT: %s", enrich_exc)
         return reel
     except Exception as exc:  # noqa: BLE001
         logger.warning("ensure_reel_transcript failed for %s: %s", reel.id, exc)

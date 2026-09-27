@@ -9,6 +9,7 @@ from app.models import Competitor, Reel
 from app.schemas import ReelDetail, ReelListItem, ReelUpdateRequest
 from app.services.discovery import fetch_home_discover_reels
 from app.services.instagram_free import looks_like_real_transcript
+from app.services.overview import schedule_analysis
 from app.services.serializers import reel_to_detail
 from app.services.stt_jobs import schedule_transcripts
 
@@ -70,7 +71,10 @@ def get_reel(
     if not looks_like_real_transcript(reel.transcript):
         background_tasks.add_task(schedule_transcripts, [reel.id])
 
-    return reel_to_detail(reel, competitor, session=session)
+    detail = reel_to_detail(reel, competitor, session=session)
+    if detail.analysis_pending:
+        background_tasks.add_task(schedule_analysis, reel.id)
+    return detail
 
 
 @router.patch("/{reel_id}", response_model=ReelDetail)

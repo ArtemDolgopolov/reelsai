@@ -39,7 +39,6 @@ def _model_candidates(preferred: str | None = None) -> list[str]:
 
 
 def _retry_after_seconds(response: httpx.Response) -> float:
-    """Parse Groq 429 wait hint; default to a short pause."""
     header = response.headers.get("retry-after")
     if header:
         try:
@@ -62,14 +61,22 @@ def groq_chat(
     model: str | None = None,
     temperature: float = 0.3,
     max_tokens: int = 700,
+    allow_wait: bool = False,
 ) -> str | None:
+    """
+    Call Groq chat.
+
+    allow_wait=False (default): fail fast on 429 / try next model — safe for request threads.
+    allow_wait=True: short sleeps ok — use only from background workers.
+    """
     api_key = _api_key()
     if not api_key:
         return None
 
     last_error = ""
     for candidate in _model_candidates(model or DEFAULT_CHAT_MODEL):
-        for attempt in range(2):
+        attempts = 2 if allow_wait else 1
+        for attempt in range(attempts):
             try:
                 response = httpx.post(
                     GROQ_CHAT_URL,
@@ -90,17 +97,16 @@ def groq_chat(
                 )
                 if response.status_code == 429:
                     last_error = f"HTTP 429: {response.text[:240]}"
-                    wait_s = _retry_after_seconds(response)
-                    logger.warning(
-                        "Groq chat rate-limited on %s (attempt %s), sleeping %.1fs",
-                        candidate,
-                        attempt + 1,
-                        wait_s,
-                    )
-                    if attempt == 0:
+                    if allow_wait and attempt + 1 < attempts:
+                        wait_s = _retry_after_seconds(response)
+                        logger.warning(
+                            "Groq chat rate-limited on %s, sleeping %.1fs",
+                            candidate,
+                            wait_s,
+                        )
                         time.sleep(wait_s)
                         continue
-                    # Exhausted retries for this model — try the next one.
+                    logger.warning("Groq chat rate-limited on %s, trying next model", candidate)
                     break
 
                 if response.status_code >= 400:
@@ -159,53 +165,6 @@ def _clean_prose(value: Any, limit: int) -> str:
     return text[:limit]
 
 
-def explain_reel_in_russian(
-    *,
-    author: str,
-    handle: str,
-    duration_label: str,
-    views_label: str,
-    transcript: str | None,
-    caption: str | None,
-    title: str | None,
-) -> str | None:
-    """ChatGPT-style explanation of what happens in the reel — not a raw transcript dump."""
-    analysis = analyze_reel_bundle(
-        author=author,
-        handle=handle,
-        duration_label=duration_label,
-        views_label=views_label,
-        transcript=transcript,
-        caption=caption,
-        title=title,
-    )
-    if analysis and analysis.get("overview"):
-        return str(analysis["overview"])
-    return None
-
-
-def structure_remix_sections(transcript: str, caption: str | None = None) -> tuple[str, str, str] | None:
-    """Split speech into Hook / continuous Script / end CTA via Groq."""
-    analysis = analyze_reel_bundle(
-        author="",
-        handle="",
-        duration_label="",
-        views_label="",
-        transcript=transcript,
-        caption=caption,
-        title=None,
-        need_overview=False,
-    )
-    if not analysis:
-        return None
-    hook = analysis.get("hook") or ""
-    script = analysis.get("script") or ""
-    cta = analysis.get("cta") or ""
-    if not hook or not script:
-        return None
-    return str(hook), str(script), str(cta)
-
-
 def analyze_reel_bundle(
     *,
     author: str,
@@ -216,11 +175,9 @@ def analyze_reel_bundle(
     caption: str | None,
     title: str | None,
     need_overview: bool = True,
+    allow_wait: bool = False,
 ) -> dict[str, str] | None:
-    """
-    One Groq call → overview (RU) + hook/script/cta.
-    Saves TPM vs separate explain + structure requests.
-    """
+    """One Groq call → overview (RU) + hook/script/cta."""
     spoken = (transcript or "").strip()
     context_bits: list[str] = []
     if spoken:
@@ -253,7 +210,13 @@ def analyze_reel_bundle(
         meta += f"Просмотры: {views_label}\n"
     user = meta + "\n" + "\n\n".join(context_bits)
 
-    raw = groq_chat(system=system, user=user, temperature=0.25, max_tokens=1100)
+    raw = groq_chat(
+        system=system,
+        user=user,
+        temperature=0.25,
+        max_tokens=1100,
+        allow_wait=allow_wait,
+    )
     if not raw:
         return None
     data = _extract_json_object(raw)
@@ -272,3 +235,50 @@ def analyze_reel_bundle(
     if not result["hook"] or not result["script"]:
         return None
     return result
+
+
+def explain_reel_in_russian(
+    *,
+    author: str,
+    handle: str,
+    duration_label: str,
+    views_label: str,
+    transcript: str | None,
+    caption: str | None,
+    title: str | None,
+) -> str | None:
+    analysis = analyze_reel_bundle(
+        author=author,
+        handle=handle,
+        duration_label=duration_label,
+        views_label=views_label,
+        transcript=transcript,
+        caption=caption,
+        title=title,
+        allow_wait=False,
+    )
+    if analysis and analysis.get("overview"):
+        return str(analysis["overview"])
+    return None
+
+
+def structure_remix_sections(transcript: str, caption: str | None = None) -> tuple[str, str, str] | None:
+    analysis = analyze_reel_bundle(
+        author="",
+        handle="",
+        duration_label="",
+        views_label="",
+        transcript=transcript,
+        caption=caption,
+        title=None,
+        need_overview=False,
+        allow_wait=False,
+    )
+    if not analysis:
+        return None
+    hook = analysis.get("hook") or ""
+    script = analysis.get("script") or ""
+    cta = analysis.get("cta") or ""
+    if not hook or not script:
+        return None
+    return str(hook), str(script), str(cta)
