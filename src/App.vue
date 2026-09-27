@@ -403,12 +403,12 @@ function syncPageFromHash() {
 
 onMounted(async () => {
   window.addEventListener('hashchange', syncPageFromHash)
-  const boot = [loadHomeReels(), loadInitialCompetitor()]
+  await Promise.all([loadHomeReels(), loadInitialCompetitor()])
+  // Same restore path as before: open the reel after boot, while detailLoading
+  // already prevents the empty "Рилс не выбран" flash.
   if (initialRoute.page === 'detail' && initialRoute.reelId) {
-    // Restore the open reel immediately — don't wait for the home feed.
-    boot.push(openReel(initialRoute.reelId, { syncHash: false }))
+    await openReel(initialRoute.reelId, { syncHash: false })
   }
-  await Promise.all(boot)
 })
 
 onBeforeUnmount(() => {
