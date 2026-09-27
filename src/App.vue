@@ -5,7 +5,6 @@ import {
   ArrowUpRight,
   Camera,
   Check,
-  ChevronRight,
   CircleHelp,
   Copy,
   ExternalLink,
@@ -21,7 +20,6 @@ import {
   Play,
   Save,
   Search,
-  Settings,
   Sparkles,
   Target,
   Users,
@@ -52,7 +50,7 @@ const competitorLoading = ref(false)
 const homeReels = ref([])
 const homeLoading = ref(true)
 const selectedReel = ref(null)
-const detailLoading = ref(false)
+const detailLoading = ref(Boolean(initialRoute.page === 'detail' && initialRoute.reelId))
 const editingSection = ref(null)
 const draft = ref('')
 const saveState = ref('idle')
@@ -405,11 +403,12 @@ function syncPageFromHash() {
 
 onMounted(async () => {
   window.addEventListener('hashchange', syncPageFromHash)
-  await Promise.all([loadHomeReels(), loadInitialCompetitor()])
-  const { page, reelId } = parseLocationHash()
-  if (page === 'detail' && reelId) {
-    await openReel(reelId, { syncHash: false })
+  const boot = [loadHomeReels(), loadInitialCompetitor()]
+  if (initialRoute.page === 'detail' && initialRoute.reelId) {
+    // Restore the open reel immediately — don't wait for the home feed.
+    boot.push(openReel(initialRoute.reelId, { syncHash: false }))
   }
+  await Promise.all(boot)
 })
 
 onBeforeUnmount(() => {
@@ -447,25 +446,6 @@ onBeforeUnmount(() => {
           <span>Конкуренты</span>
         </button>
       </nav>
-
-      <div class="sidebar-bottom">
-        <button class="nav-item subtle" type="button">
-          <CircleHelp :size="18" />
-          <span>Помощь</span>
-        </button>
-        <button class="nav-item subtle" type="button">
-          <Settings :size="18" />
-          <span>Настройки</span>
-        </button>
-        <div class="plan-card">
-          <span class="plan-icon">👑</span>
-          <span>
-            <strong>Pro план</strong>
-            <small>Безлимитные AI-анализы</small>
-          </span>
-          <ChevronRight :size="16" />
-        </div>
-      </div>
     </aside>
 
     <main class="workspace">
@@ -652,8 +632,8 @@ onBeforeUnmount(() => {
           Назад к списку
         </button>
 
-        <div v-if="detailLoading || !selectedReel" class="empty-state">
-          <Sparkles :size="30" />
+        <div v-if="detailLoading || !selectedReel" class="empty-state detail-boot">
+          <LoaderCircle :size="28" class="spin" />
           <strong>{{ detailLoading ? 'Открываем разбор…' : (saveError || 'Рилс не выбран') }}</strong>
           <p v-if="saveError && !detailLoading">Попробуйте открыть рилс снова с главной.</p>
         </div>

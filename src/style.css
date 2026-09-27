@@ -157,55 +157,6 @@ img {
   stroke-width: 2.5;
 }
 
-.sidebar-bottom {
-  display: grid;
-  gap: 4px;
-  margin-top: auto;
-}
-
-.nav-item.subtle {
-  color: #797483;
-  font-size: 12px;
-}
-
-.plan-card {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  padding: 11px 9px;
-  background: linear-gradient(135deg, #fff8e6, #fff);
-  border: 1px solid #f4e8c8;
-  border-radius: 12px;
-}
-
-.plan-card strong,
-.plan-card small {
-  display: block;
-}
-
-.plan-card strong {
-  font-size: 11px;
-}
-
-.plan-card small {
-  margin-top: 2px;
-  color: #8c8492;
-  font-size: 8px;
-  line-height: 1.3;
-}
-
-.plan-icon {
-  display: grid;
-  width: 26px;
-  height: 26px;
-  font-size: 13px;
-  place-items: center;
-  background: #fff4ce;
-  border-radius: 8px;
-}
-
 .workspace {
   min-width: 0;
   min-height: 100vh;
@@ -674,11 +625,21 @@ img {
   border-radius: 16px;
 }
 
+.empty-state.detail-boot {
+  color: #6b7280;
+}
+
+.empty-state.detail-boot strong {
+  color: #374151;
+}
+
 .empty-state strong {
   color: #514a5c;
 }
 
-.empty-state span {
+.empty-state span,
+.empty-state p {
+  margin: 0;
   font-size: 12px;
 }
 
@@ -1613,15 +1574,6 @@ img {
   font-size: 14px;
 }
 
-.nav-item.subtle,
-.plan-card strong {
-  font-size: 12px;
-}
-
-.plan-card small {
-  font-size: 10px;
-}
-
 .page-header p {
   font-size: 15px;
 }
@@ -1760,26 +1712,17 @@ img {
   }
 
   .brand > span:last-child,
-  .nav-item span,
-  .plan-card span:not(.plan-icon),
-  .plan-card > svg {
+  .nav-item span {
     display: none;
   }
 
-  .primary-nav,
-  .sidebar-bottom {
+  .primary-nav {
     width: 100%;
   }
 
   .nav-item {
     justify-content: center;
     padding: 0;
-  }
-
-  .plan-card {
-    display: flex;
-    justify-content: center;
-    padding: 7px;
   }
 
   .reels-grid {
@@ -1835,10 +1778,6 @@ img {
 
   .nav-item {
     width: 44px;
-  }
-
-  .sidebar-bottom {
-    display: none;
   }
 
   .page {
