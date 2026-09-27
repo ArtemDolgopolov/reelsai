@@ -31,8 +31,18 @@ import {
 } from '@lucide/vue'
 
 const pages = ['home', 'competitors', 'detail']
-const pageFromHash = window.location.hash.slice(1)
-const currentPage = ref(pages.includes(pageFromHash) ? pageFromHash : 'home')
+
+function parseLocationHash() {
+  const raw = window.location.hash.replace(/^#/, '').trim()
+  if (!raw) return { page: 'home', reelId: null }
+  const [pagePart, ...rest] = raw.split('/')
+  const page = pages.includes(pagePart) ? pagePart : 'home'
+  const reelId = page === 'detail' && rest[0] ? rest[0] : null
+  return { page, reelId }
+}
+
+const initialRoute = parseLocationHash()
+const currentPage = ref(initialRoute.page)
 const searchQuery = ref('')
 const competitorHandle = ref('@vibecoding_creator')
 const competitor = ref(null)
@@ -135,9 +145,18 @@ function onThumbError(event) {
   if (poster) poster.classList.add('thumb-missing')
 }
 
-function navigate(page) {
+function navigate(page, reelId = null) {
   currentPage.value = page
-  window.location.hash = page
+  const nextHash =
+    page === 'detail' && reelId ? `detail/${reelId}` : page
+  if (window.location.hash.replace(/^#/, '') !== nextHash) {
+    window.location.hash = nextHash
+  }
+  if (page !== 'detail') {
+    stopSpeechPolling()
+    selectedReel.value = null
+    editingSection.value = null
+  }
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
@@ -213,14 +232,19 @@ async function loadHomeReels() {
   }
 }
 
-async function openReel(reelId) {
+async function openReel(reelId, { syncHash = true } = {}) {
+  if (!reelId) return
   detailLoading.value = true
   saveError.value = ''
   editingSection.value = null
   copiedSection.value = ''
   stopSpeechPolling()
   analysisRevealKey.value += 1
-  navigate('detail')
+  if (syncHash) {
+    navigate('detail', reelId)
+  } else {
+    currentPage.value = 'detail'
+  }
 
   try {
     const response = await fetch(`/api/reels/${reelId}`, { cache: 'no-store' })
@@ -233,6 +257,7 @@ async function openReel(reelId) {
     }
   } catch (error) {
     saveError.value = error.message
+    selectedReel.value = null
   } finally {
     detailLoading.value = false
   }
@@ -363,13 +388,28 @@ async function saveSection(section) {
 }
 
 function syncPageFromHash() {
-  const page = window.location.hash.slice(1)
-  if (pages.includes(page)) currentPage.value = page
+  const { page, reelId } = parseLocationHash()
+  currentPage.value = page
+  if (page === 'detail' && reelId) {
+    if (selectedReel.value?.id !== reelId && !detailLoading.value) {
+      openReel(reelId, { syncHash: false })
+    }
+    return
+  }
+  if (page !== 'detail') {
+    stopSpeechPolling()
+    selectedReel.value = null
+    editingSection.value = null
+  }
 }
 
 onMounted(async () => {
   window.addEventListener('hashchange', syncPageFromHash)
   await Promise.all([loadHomeReels(), loadInitialCompetitor()])
+  const { page, reelId } = parseLocationHash()
+  if (page === 'detail' && reelId) {
+    await openReel(reelId, { syncHash: false })
+  }
 })
 
 onBeforeUnmount(() => {
@@ -614,8 +654,8 @@ onBeforeUnmount(() => {
 
         <div v-if="detailLoading || !selectedReel" class="empty-state">
           <Sparkles :size="30" />
-          <strong>{{ detailLoading ? 'Открываем разбор…' : 'Рилс не выбран' }}</strong>
-          <p v-if="saveError">{{ saveError }}</p>
+          <strong>{{ detailLoading ? 'Открываем разбор…' : (saveError || 'Рилс не выбран') }}</strong>
+          <p v-if="saveError && !detailLoading">Попробуйте открыть рилс снова с главной.</p>
         </div>
 
         <div v-else class="detail-layout">
