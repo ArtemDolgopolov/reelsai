@@ -70,7 +70,7 @@ def get_reel(
     if not looks_like_real_transcript(reel.transcript):
         background_tasks.add_task(schedule_transcripts, [reel.id])
 
-    return reel_to_detail(reel, competitor)
+    return reel_to_detail(reel, competitor, session=session)
 
 
 @router.patch("/{reel_id}", response_model=ReelDetail)
@@ -101,4 +101,4 @@ def update_reel(
     competitor = session.get(Competitor, reel.competitor_id)
     if competitor is None:
         raise HTTPException(status_code=404, detail="Competitor not found")
-    return reel_to_detail(reel, competitor)
+    return reel_to_detail(reel, competitor, session=session)

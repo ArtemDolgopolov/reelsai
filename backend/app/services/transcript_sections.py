@@ -67,6 +67,8 @@ def _looks_like_cta(sentence: str) -> bool:
 def split_transcript_into_sections(
     spoken: str | None,
     caption: str | None = None,
+    *,
+    use_llm: bool = True,
 ) -> tuple[str, str, str]:
     """
     Distribute speech (or caption fallback) across Remix sections.
@@ -79,16 +81,17 @@ def split_transcript_into_sections(
     if not source:
         return "", "", DEFAULT_CTA
 
-    # Prefer free Groq structuring when available.
-    structured = structure_remix_sections(source, caption)
-    if structured:
-        hook, script, cta = structured
-        script = continuous_text(script)
-        cta = continuous_text(cta)
-        if cta and not _looks_like_cta(cta) and len(cta.split()) > 18:
-            # Model returned story fragment as CTA — keep script, use default CTA.
-            cta = DEFAULT_CTA
-        return hook, script, cta or DEFAULT_CTA
+    # Prefer free Groq structuring when available (skip if caller already tried).
+    if use_llm:
+        structured = structure_remix_sections(source, caption)
+        if structured:
+            hook, script, cta = structured
+            script = continuous_text(script)
+            cta = continuous_text(cta)
+            if cta and not _looks_like_cta(cta) and len(cta.split()) > 18:
+                # Model returned story fragment as CTA — keep script, use default CTA.
+                cta = DEFAULT_CTA
+            return hook, script, cta or DEFAULT_CTA
 
     sentences = _sentences(source)
     words = source.split()
