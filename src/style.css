@@ -649,6 +649,12 @@ img {
 
 .competitors-list-view {
   max-width: 720px;
+  margin-inline: auto;
+}
+
+.competitors-page:has(.competitors-list-view) > .page-header {
+  max-width: 720px;
+  margin-inline: auto;
 }
 
 .competitor-loader {
