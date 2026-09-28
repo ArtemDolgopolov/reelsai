@@ -77,9 +77,12 @@ export async function logoutAccount() {
   await api('/api/auth/logout', { method: 'POST' })
 }
 
-export async function fetchOauthProviders() {
-  const response = await api('/api/auth/oauth/providers')
-  if (!response.ok) return { google: false, yandex: false }
+export async function claimOauthTicket(ticket) {
+  const response = await api('/api/auth/oauth/claim', {
+    method: 'POST',
+    body: JSON.stringify({ ticket }),
+  })
+  if (!response.ok) throw new Error(await parseError(response))
   return response.json()
 }
 

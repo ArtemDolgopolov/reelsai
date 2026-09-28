@@ -43,7 +43,7 @@ import LandingPage from './components/marketing/LandingPage.vue'
 import LoginPage from './components/marketing/LoginPage.vue'
 import RegisterPage from './components/marketing/RegisterPage.vue'
 import VerifyOtpPage from './components/marketing/VerifyOtpPage.vue'
-import { fetchMe, logoutAccount } from './authApi.js'
+import { claimOauthTicket, fetchMe, logoutAccount } from './authApi.js'
 
 const marketingPages = ['landing', 'login', 'register', 'verify-otp']
 const appPages = ['home', 'plan', 'competitors', 'detail']
@@ -1052,11 +1052,42 @@ onMounted(async () => {
     window.history.replaceState({}, '', `${window.location.pathname}#${cleanHash}`)
     currentPage.value = cleanHash
   }
+  const oauthTicket = bootQuery.get('ticket')
+  if (oauthTicket) {
+    try {
+      const claimed = await claimOauthTicket(oauthTicket)
+      currentUser.value = claimed.user
+    } catch (err) {
+      try {
+        sessionStorage.setItem(
+          'reelsai_oauth_error',
+          err.message || 'Не удалось завершить вход через Яндекс',
+        )
+      } catch {
+        // ignore
+      }
+      currentPage.value = 'login'
+      window.location.hash = 'login'
+      authBooting.value = false
+      return
+    }
+  }
   await bootstrapAuth()
   if (bootQuery.get('auth') === 'home' && currentUser.value) {
     void loadHomeReels()
     void loadInitialCompetitor()
     void loadContentPlan()
+    return
+  }
+  if (bootQuery.get('auth') === 'home' && !currentUser.value) {
+    currentPage.value = 'login'
+    window.location.hash = 'login'
+    try {
+      sessionStorage.setItem('reelsai_oauth_error', 'Сессия после Яндекса не сохранилась, попробуйте ещё раз')
+    } catch {
+      // ignore
+    }
+    authBooting.value = false
     return
   }
   if (marketingPages.includes(initialRoute.page) || marketingPages.includes(currentPage.value)) {

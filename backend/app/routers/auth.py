@@ -7,7 +7,7 @@ from sqlmodel import Session
 from app.config import get_settings
 from app.db import get_session
 from app.deps import ACCESS_COOKIE, REFRESH_COOKIE, client_meta, get_current_user
-from app.models import User
+from app.models import User, UserStatus
 from app.services import auth_oauth, auth_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -302,7 +302,44 @@ def oauth_callback(
         return fail(f"Внутренняя ошибка: {exc}")
 
     # Skip email OTP for OAuth — provider already verified the identity.
-    redirect = RedirectResponse(url=f"{base}/?auth=home", status_code=302)
+    from app.services.auth_tickets import create_login_ticket
+
+    ticket = create_login_ticket(
+        access=access,
+        refresh=refresh,
+        user_id=str(_user.id),
+    )
+    redirect = RedirectResponse(
+        url=f"{base}/?auth=home&ticket={ticket}",
+        status_code=302,
+    )
     redirect.delete_cookie(OAUTH_STATE_COOKIE, path="/")
+    redirect.delete_cookie(PENDING_CHALLENGE_COOKIE, path="/")
+    # Also try cookies; frontend will claim ticket if they were dropped.
     _set_auth_cookies(redirect, access, refresh)
     return redirect
+
+
+class OAuthClaimRequest(BaseModel):
+    ticket: str = Field(min_length=8, max_length=128)
+
+
+@router.post("/oauth/claim", response_model=SessionResponse)
+def oauth_claim(
+    body: OAuthClaimRequest,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> SessionResponse:
+    """Exchange one-time OAuth ticket for session cookies."""
+    from uuid import UUID
+
+    from app.services.auth_tickets import claim_login_ticket
+
+    payload = claim_login_ticket(body.ticket)
+    if not payload:
+        raise HTTPException(status_code=400, detail="Сессия OAuth истекла, войдите снова")
+    user = session.get(User, UUID(payload["user_id"]))
+    if not user or user.status == UserStatus.disabled:
+        raise HTTPException(status_code=401, detail="Аккаунт недоступен")
+    _set_auth_cookies(response, payload["access"], payload["refresh"])
+    return SessionResponse(user=UserResponse(**auth_service.user_public(user)))
