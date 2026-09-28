@@ -900,40 +900,41 @@ onBeforeUnmount(() => {
                 <strong>{{ item.title }}</strong>
                 <span>{{ item.author }}<template v-if="formatPostedAt(item.posted_at)"> · {{ formatPostedAt(item.posted_at) }}</template></span>
                 <div class="status-chip compact" :class="item.shoot_status">
-                  <X v-if="item.shoot_status === 'todo'" :size="12" />
-                  <Hourglass v-else-if="item.shoot_status === 'ready'" :size="12" />
-                  <Check v-else :size="12" />
+                  <span aria-hidden="true">{{ item.shoot_status === 'done' ? '✅' : item.shoot_status === 'ready' ? '⏳' : '❌' }}</span>
                   {{ shootStatusLabel(item.shoot_status) }}
                 </div>
               </div>
               <div class="plan-card-controls">
-                <div class="shoot-status-group" role="group" aria-label="Статус съёмки">
+                <div class="plan-status-group" role="group" aria-label="Статус съёмки">
                   <button
                     type="button"
-                    class="shoot-status-button todo"
+                    class="plan-status-btn todo"
                     :class="{ active: item.shoot_status === 'todo' }"
                     title="Не взят в работу"
+                    aria-label="Не взят в работу"
                     @click="setShootStatus(item.id, 'todo')"
                   >
-                    <X :size="11" />
+                    ❌
                   </button>
                   <button
                     type="button"
-                    class="shoot-status-button ready"
+                    class="plan-status-btn ready"
                     :class="{ active: item.shoot_status === 'ready' }"
                     title="Ждёт съёмки"
+                    aria-label="Ждёт съёмки"
                     @click="setShootStatus(item.id, 'ready')"
                   >
-                    <Hourglass :size="11" />
+                    ⏳
                   </button>
                   <button
                     type="button"
-                    class="shoot-status-button done"
+                    class="plan-status-btn done"
                     :class="{ active: item.shoot_status === 'done' }"
                     title="Снят и выложен"
+                    aria-label="Снят и выложен"
                     @click="setShootStatus(item.id, 'done')"
                   >
-                    <Check :size="11" />
+                    ✅
                   </button>
                 </div>
                 <button
@@ -944,7 +945,7 @@ onBeforeUnmount(() => {
                   :disabled="planBusyItemId === item.id"
                   @click="removeFromContentPlan(item)"
                 >
-                  <Trash2 :size="16" />
+                  <Trash2 :size="15" />
                 </button>
               </div>
             </div>
