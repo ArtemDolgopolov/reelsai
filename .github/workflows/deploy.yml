@@ -28,6 +28,8 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Sync deployment directory
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: |
           sudo mkdir -p /opt/reelsai
           sudo rsync -a --delete --exclude .git --exclude .env ./ /opt/reelsai/
@@ -47,6 +49,19 @@ jobs:
           fi
           if ! grep -q '^PUBLIC_APP_URL=' /opt/reelsai/.env; then
             echo 'PUBLIC_APP_URL=http://18.192.179.203' >> /opt/reelsai/.env
+          fi
+          # Inject secrets from GitHub without committing them
+          if [ -n "${RESEND_API_KEY:-}" ]; then
+            if grep -q '^RESEND_API_KEY=' /opt/reelsai/.env; then
+              sed -i "s|^RESEND_API_KEY=.*|RESEND_API_KEY=${RESEND_API_KEY}|" /opt/reelsai/.env
+            else
+              echo "RESEND_API_KEY=${RESEND_API_KEY}" >> /opt/reelsai/.env
+            fi
+            if grep -q '^AUTH_DEV_EXPOSE_OTP=' /opt/reelsai/.env; then
+              sed -i 's|^AUTH_DEV_EXPOSE_OTP=.*|AUTH_DEV_EXPOSE_OTP=false|' /opt/reelsai/.env
+            else
+              echo 'AUTH_DEV_EXPOSE_OTP=false' >> /opt/reelsai/.env
+            fi
           fi
           sudo chown -R "$USER":"$USER" /opt/reelsai
 
