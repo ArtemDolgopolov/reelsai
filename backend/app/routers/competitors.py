@@ -255,6 +255,18 @@ def list_competitor_reels(
     ]
 
 
+@router.delete("/{competitor_id}")
+def delete_competitor(
+    competitor_id: UUID,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    """Remove competitor from this user's list (shared scrape cache stays)."""
+    if not tenancy.untrack_competitor(session, user.id, competitor_id):
+        raise HTTPException(status_code=404, detail="Competitor not found")
+    return {"status": "ok"}
+
+
 @router.post("/load", response_model=CompetitorLoadResponse)
 async def load_competitor(
     payload: CompetitorLoadRequest,

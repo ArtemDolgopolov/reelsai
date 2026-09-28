@@ -51,7 +51,7 @@ const appPages = ['home', 'plan', 'competitors', 'detail']
 const pages = [...marketingPages, ...appPages]
 
 function parseLocationHash() {
-  const raw = window.location.hash.replace(/^#/, '').trim()
+  const raw = window.location.hash.replace(/^#\/?/, '').trim()
   const query = new URLSearchParams(window.location.search)
   // OAuth callback lands on /?auth=... (hash is unreliable on 302).
   if (query.get('auth') === 'verify-otp') {
@@ -78,6 +78,25 @@ function parseLocationHash() {
   return { page, reelId, competitorId }
 }
 
+function apiFetch(url, options = {}) {
+  return fetch(url, {
+    ...options,
+    credentials: 'include',
+    headers: {
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.headers || {}),
+    },
+  })
+}
+
+function networkErrorMessage(error) {
+  const raw = error?.message || ''
+  if (raw === 'Failed to fetch' || raw === 'NetworkError when attempting to fetch resource.') {
+    return 'Нет связи с сервером. Откройте сайт по HTTPS (https://18.192.179.203.sslip.io) и попробуйте снова.'
+  }
+  return raw || 'Неизвестная ошибка'
+}
+
 const initialRoute = parseLocationHash()
 const currentPage = ref(initialRoute.page)
 const currentUser = ref(null)
@@ -94,6 +113,7 @@ const competitor = ref(null)
 const competitorReels = ref([])
 const competitorMessage = ref('')
 const competitorLoading = ref(false)
+const competitorRemovingId = ref(null)
 const competitorOpening = ref(false)
 const competitorAvatarBroken = ref(false)
 const competitorListAvatarBroken = ref({})
@@ -406,7 +426,7 @@ async function refreshPlaybackUrl() {
   const reelId = selectedReel.value?.id
   if (!reelId) return false
   try {
-    const response = await fetch(`/api/reels/${reelId}/refresh-video`, { method: 'POST' })
+    const response = await apiFetch(`/api/reels/${reelId}/refresh-video`, { method: 'POST' })
     if (!response.ok) return false
     const body = await response.json()
     if (selectedReel.value?.id === reelId) {
@@ -624,7 +644,7 @@ function startSpeechPolling(reelId) {
       return
     }
     try {
-      const response = await fetch(`/api/reels/${reelId}`, { cache: 'no-store' })
+      const response = await apiFetch(`/api/reels/${reelId}`, { cache: 'no-store' })
       if (!response.ok) return
       const body = await response.json()
       applyAnalysisUpdate(body, reelId)
@@ -660,7 +680,7 @@ async function loadHomeReels() {
   const hadItems = homeReels.value.length > 0
   if (!hadItems) homeLoading.value = true
   try {
-    const response = await fetch('/api/reels?limit=40', { cache: 'no-store' })
+    const response = await apiFetch('/api/reels?limit=40', { cache: 'no-store' })
     if (!response.ok) throw new Error('Не удалось загрузить рилсы')
     homeReels.value = await response.json()
   } catch (error) {
@@ -690,7 +710,7 @@ async function openReel(reelId, { syncHash = true, remix = false } = {}) {
   }
 
   try {
-    const response = await fetch(`/api/reels/${reelId}`, { cache: 'no-store' })
+    const response = await apiFetch(`/api/reels/${reelId}`, { cache: 'no-store' })
     if (!response.ok) throw new Error('Не удалось открыть рилс')
     selectedReel.value = await response.json()
     if (selectedReel.value?.speech_pending || selectedReel.value?.analysis_pending) {
@@ -728,7 +748,7 @@ async function startRemix(reelId) {
     cta: '',
   }
   try {
-    const response = await fetch(`/api/reels/${reelId}/remix`, { method: 'POST' })
+    const response = await apiFetch(`/api/reels/${reelId}/remix`, { method: 'POST' })
     const body = await response.json()
     if (!response.ok) {
       const detail = Array.isArray(body.detail)
@@ -782,7 +802,7 @@ async function loadCompetitor(forceRefresh = false) {
   saveError.value = ''
 
   try {
-    const response = await fetch('/api/competitors/load', {
+    const response = await apiFetch('/api/competitors/load', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -806,11 +826,38 @@ async function loadCompetitor(forceRefresh = false) {
     competitor.value = null
     competitorReels.value = []
   } catch (error) {
-    setFlash(saveError, 'saveError', error.message)
+    setFlash(saveError, 'saveError', networkErrorMessage(error))
     clearFlash('competitor')
     competitorMessage.value = ''
   } finally {
     competitorLoading.value = false
+  }
+}
+
+async function removeCompetitor(item) {
+  if (!item?.id || competitorRemovingId.value === item.id) return
+  competitorRemovingId.value = item.id
+  clearFlash('saveError')
+  saveError.value = ''
+  try {
+    const response = await apiFetch(`/api/competitors/${item.id}`, { method: 'DELETE' })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      throw new Error(body.detail || 'Не удалось удалить конкурента')
+    }
+    competitorsList.value = competitorsList.value.filter((row) => row.id !== item.id)
+    if (selectedCompetitorId.value === item.id) {
+      selectedCompetitorId.value = null
+      competitor.value = null
+      competitorReels.value = []
+    }
+    homeReels.value = homeReels.value.filter((reel) => reel.competitor_id !== item.id)
+    void loadContentPlan()
+    setFlash(competitorMessage, 'competitor', `@${item.username} удалён из списка`)
+  } catch (error) {
+    setFlash(saveError, 'saveError', networkErrorMessage(error))
+  } finally {
+    competitorRemovingId.value = null
   }
 }
 
@@ -838,7 +885,7 @@ async function saveSection(section) {
   saveError.value = ''
 
   try {
-    const response = await fetch(`/api/reels/${selectedReel.value.id}`, {
+    const response = await apiFetch(`/api/reels/${selectedReel.value.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ section, value: draft.value }),
@@ -920,7 +967,7 @@ function syncPageFromHash() {
 
 async function loadCompetitorsList() {
   try {
-    const response = await fetch('/api/competitors', { cache: 'no-store' })
+    const response = await apiFetch('/api/competitors', { cache: 'no-store' })
     if (!response.ok) return
     competitorsList.value = await response.json()
   } catch {
@@ -940,8 +987,8 @@ async function openCompetitor(competitorId, { syncHash = true } = {}) {
 
   try {
     const [profileResponse, reelsResponse] = await Promise.all([
-      fetch(`/api/competitors/${competitorId}`, { cache: 'no-store' }),
-      fetch(`/api/competitors/${competitorId}/reels`, { cache: 'no-store' }),
+      apiFetch(`/api/competitors/${competitorId}`, { cache: 'no-store' }),
+      apiFetch(`/api/competitors/${competitorId}/reels`, { cache: 'no-store' }),
     ])
     if (!profileResponse.ok) throw new Error('Не удалось открыть конкурента')
     competitor.value = await profileResponse.json()
@@ -975,7 +1022,7 @@ function onListAvatarError(competitorId) {
 async function loadContentPlan() {
   planLoading.value = true
   try {
-    const response = await fetch('/api/content-plan', { cache: 'no-store' })
+    const response = await apiFetch('/api/content-plan', { cache: 'no-store' })
     if (!response.ok) throw new Error('Не удалось загрузить контент-план')
     planItems.value = await response.json()
   } catch (error) {
@@ -1004,7 +1051,7 @@ async function removeFromContentPlan(item) {
   clearFlash('saveError')
   saveError.value = ''
   try {
-    const response = await fetch(`/api/content-plan/${item.id}`, { method: 'DELETE' })
+    const response = await apiFetch(`/api/content-plan/${item.id}`, { method: 'DELETE' })
     if (!response.ok) {
       const body = await response.json().catch(() => ({}))
       throw new Error(body.detail || 'Не удалось удалить из плана')
@@ -1035,7 +1082,7 @@ async function addToContentPlan(reelId) {
   clearFlash('saveError')
   saveError.value = ''
   try {
-    const response = await fetch('/api/content-plan', {
+    const response = await apiFetch('/api/content-plan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reel_id: reelId }),
@@ -1067,7 +1114,7 @@ async function setShootStatus(itemId, shootStatus) {
     current.shoot_status = shootStatus
   }
   try {
-    const response = await fetch(`/api/content-plan/${itemId}`, {
+    const response = await apiFetch(`/api/content-plan/${itemId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shoot_status: shootStatus }),
@@ -1103,6 +1150,15 @@ async function setShootStatusForReel(reelId, shootStatus) {
 }
 
 onMounted(async () => {
+  if (
+    window.location.protocol === 'http:' &&
+    window.location.hostname.endsWith('.sslip.io')
+  ) {
+    window.location.replace(
+      `https://${window.location.host}${window.location.pathname}${window.location.search}${window.location.hash}`,
+    )
+    return
+  }
   window.addEventListener('hashchange', syncPageFromHash)
   const bootQuery = new URLSearchParams(window.location.search)
   const oauthError = bootQuery.get('oauth_error')
@@ -1589,6 +1645,16 @@ onBeforeUnmount(() => {
                     @click="openCompetitor(item.id)"
                   >
                     Открыть
+                  </button>
+                  <button
+                    class="ghost-button competitor-delete-button"
+                    type="button"
+                    :disabled="competitorRemovingId === item.id"
+                    :aria-label="`Удалить @${item.username}`"
+                    :title="`Удалить @${item.username}`"
+                    @click="removeCompetitor(item)"
+                  >
+                    <Trash2 :size="15" />
                   </button>
                 </div>
               </article>

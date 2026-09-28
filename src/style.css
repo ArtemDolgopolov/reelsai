@@ -1325,6 +1325,20 @@ img {
   padding: 0 14px;
 }
 
+.competitor-delete-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  color: #be123c;
+}
+
+.competitor-delete-button:hover:not(:disabled) {
+  background: rgb(190 18 60 / 8%);
+}
+
 .competitors-empty {
   margin-top: 18px;
 }
