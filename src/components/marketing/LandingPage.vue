@@ -8,6 +8,7 @@ import {
   Sparkles,
   TrendingUp,
   WandSparkles,
+  Zap,
 } from '@lucide/vue'
 
 defineEmits(['navigate'])
@@ -18,7 +19,7 @@ defineEmits(['navigate'])
     <header class="mkt-header">
       <button class="mkt-logo" type="button" @click="$emit('navigate', 'landing')">
         <span class="mkt-logo-mark"><WandSparkles :size="19" /></span>
-        AI Рилс Менеджер
+        Reels Finder
       </button>
       <div class="mkt-header-actions">
         <button class="mkt-btn mkt-btn-ghost" type="button" @click="$emit('navigate', 'login')">
@@ -111,11 +112,7 @@ defineEmits(['navigate'])
       </div>
     </section>
 
-    <footer class="mkt-platforms" aria-label="Платформы">
-      <span>YouTube</span>
-      <span>Instagram</span>
-      <span>TikTok</span>
-      <span>Meta</span>
+    <footer class="mkt-platforms" aria-label="Правовая информация">
       <a href="/privacy.html">Конфиденциальность</a>
       <a href="/terms.html">Условия</a>
     </footer>
