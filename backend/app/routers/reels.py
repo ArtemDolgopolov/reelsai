@@ -9,6 +9,7 @@ from app.models import Competitor, ContentPlanItem, Reel
 from app.schemas import ReelDetail, ReelListItem, ReelUpdateRequest
 from app.services.instagram_free import looks_like_real_transcript
 from app.services.overview import prepare_russian_remix, schedule_analysis
+from app.services.groq_llm import last_groq_failure
 from app.services.serializers import reel_to_detail, reel_to_list_item
 from app.services.stt_jobs import ensure_reel_transcript, schedule_transcripts
 from app.services.transcript_sections import DEFAULT_CTA
@@ -117,10 +118,21 @@ def remix_reel(
 
     overview, hook, script, cta, originals, used_llm = prepare_russian_remix(reel, competitor)
     if not used_llm or not script:
-        raise HTTPException(
-            status_code=503,
-            detail="Не удалось получить русский перевод. Попробуйте ещё раз через минуту.",
-        )
+        fail = last_groq_failure()
+        reason = fail.get("reason") or ""
+        if reason == "rate_limited":
+            detail = (
+                "Лимит бесплатного Groq исчерпан (слишком много запросов/токенов сегодня). "
+                "Подождите 1–2 минуты — или до завтра, если кончился дневной лимит — и нажмите Remix снова."
+            )
+        elif reason == "no_api_key":
+            detail = "На сервере не задан GROQ_API_KEY — перевод недоступен."
+        else:
+            detail = (
+                "Не удалось получить русский перевод. "
+                "Чаще всего это лимит Groq или временный сбой — попробуйте через минуту."
+            )
+        raise HTTPException(status_code=503, detail=detail)
     reel.hook = hook or reel.hook or ""
     reel.script = script
     reel.cta = cta or reel.cta or DEFAULT_CTA
