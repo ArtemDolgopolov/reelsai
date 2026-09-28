@@ -364,17 +364,17 @@ img {
 .shoot-status-group {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   margin-left: auto;
 }
 
 .shoot-status-button {
-  width: 28px !important;
-  height: 28px !important;
+  width: 22px !important;
+  height: 22px !important;
   color: #9a93a6 !important;
   background: #f7f5fb !important;
   border: 1px solid var(--line) !important;
-  border-radius: 8px !important;
+  border-radius: 6px !important;
 }
 
 .shoot-status-button.todo.active {
@@ -558,6 +558,7 @@ img {
   border: 1px solid var(--line);
   border-radius: 16px;
   box-shadow: var(--shadow);
+  transition: box-shadow 280ms ease;
 }
 
 .plan-card-top {
@@ -644,10 +645,37 @@ img {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  transition: background-color 180ms ease, border-color 180ms ease;
 }
 
 .plan-card.expanded {
   box-shadow: 0 16px 40px rgb(50 31 88 / 10%);
+}
+
+.plan-card-details {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.plan-card-details.open {
+  grid-template-rows: 1fr;
+}
+
+.plan-card-details-inner {
+  overflow: hidden;
+  min-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    opacity 220ms ease,
+    transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.plan-card-details.open .plan-card-details-inner {
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 40ms;
 }
 
 .plan-card > .status-chip {

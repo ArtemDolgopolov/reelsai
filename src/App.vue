@@ -915,7 +915,7 @@ onBeforeUnmount(() => {
                     title="Не взят в работу"
                     @click="setShootStatus(item.id, 'todo')"
                   >
-                    <X :size="14" />
+                    <X :size="11" />
                   </button>
                   <button
                     type="button"
@@ -924,7 +924,7 @@ onBeforeUnmount(() => {
                     title="Ждёт съёмки"
                     @click="setShootStatus(item.id, 'ready')"
                   >
-                    <Hourglass :size="14" />
+                    <Hourglass :size="11" />
                   </button>
                   <button
                     type="button"
@@ -933,7 +933,7 @@ onBeforeUnmount(() => {
                     title="Снят и выложен"
                     @click="setShootStatus(item.id, 'done')"
                   >
-                    <Check :size="14" />
+                    <Check :size="11" />
                   </button>
                 </div>
                 <button
@@ -964,33 +964,38 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <template v-if="isPlanExpanded(item.id)">
-              <div class="plan-script-block">
-                <span>ХУК</span>
-                <p>{{ item.hook || 'Хук ещё не готов — откройте карточку рилса' }}</p>
-              </div>
-              <div class="plan-script-block">
-                <span>СКРИПТ</span>
-                <p>{{ item.script || 'Скрипт ещё не готов — откройте карточку рилса' }}</p>
-              </div>
-              <div class="plan-script-block">
-                <span>CALL TO ACTION</span>
-                <p>{{ item.cta || 'CTA ещё не готов' }}</p>
-              </div>
+            <div
+              class="plan-card-details"
+              :class="{ open: isPlanExpanded(item.id) }"
+            >
+              <div class="plan-card-details-inner">
+                <div class="plan-script-block">
+                  <span>ХУК</span>
+                  <p>{{ item.hook || 'Хук ещё не готов — откройте карточку рилса' }}</p>
+                </div>
+                <div class="plan-script-block">
+                  <span>СКРИПТ</span>
+                  <p>{{ item.script || 'Скрипт ещё не готов — откройте карточку рилса' }}</p>
+                </div>
+                <div class="plan-script-block">
+                  <span>CALL TO ACTION</span>
+                  <p>{{ item.cta || 'CTA ещё не готов' }}</p>
+                </div>
 
-              <div class="plan-card-footer">
-                <a
-                  v-if="item.instagram_url"
-                  class="open-original-chip"
-                  :href="item.instagram_url"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <ArrowUpRight :size="12" />
-                  Оригинальный Reels
-                </a>
+                <div class="plan-card-footer">
+                  <a
+                    v-if="item.instagram_url"
+                    class="open-original-chip"
+                    :href="item.instagram_url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <ArrowUpRight :size="12" />
+                    Оригинальный Reels
+                  </a>
+                </div>
               </div>
-            </template>
+            </div>
           </article>
         </div>
 
@@ -1173,7 +1178,7 @@ onBeforeUnmount(() => {
                       title="Не взят в работу"
                       @click.stop="setShootStatusForReel(reel.id, 'todo')"
                     >
-                      <X :size="13" />
+                      <X :size="11" />
                     </button>
                     <button
                       type="button"
@@ -1182,7 +1187,7 @@ onBeforeUnmount(() => {
                       title="Ждёт съёмки"
                       @click.stop="setShootStatusForReel(reel.id, 'ready')"
                     >
-                      <Hourglass :size="13" />
+                      <Hourglass :size="11" />
                     </button>
                     <button
                       type="button"
@@ -1191,7 +1196,7 @@ onBeforeUnmount(() => {
                       title="Снят и выложен"
                       @click.stop="setShootStatusForReel(reel.id, 'done')"
                     >
-                      <Check :size="13" />
+                      <Check :size="11" />
                     </button>
                   </div>
                   <button
