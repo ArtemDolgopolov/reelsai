@@ -92,7 +92,7 @@ jobs:
       - name: Build and start application
         working-directory: /opt/reelsai
         run: |
-          docker compose build --pull --no-cache api web
+          docker compose build --pull api web
           docker compose up --detach --remove-orphans
 
       - name: Verify deployment
