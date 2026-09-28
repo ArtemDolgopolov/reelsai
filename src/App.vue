@@ -1592,7 +1592,6 @@ onBeforeUnmount(() => {
               <span class="stat-pill views"><Eye :size="15" /> <strong>{{ selectedViewsLabel }}</strong> просмотров</span>
               <span class="stat-pill likes"><Heart :size="15" /> <strong>{{ formatViews(selectedReel.likes_count) }}</strong> лайков</span>
               <span class="stat-pill comments"><MessageCircle :size="15" /> <strong>{{ formatViews(selectedReel.comments_count) }}</strong> комм.</span>
-              <span class="stat-pill duration"><Play :size="15" /> <strong>{{ selectedDurationLabel }}</strong></span>
             </div>
 
             <div class="insight-list">
