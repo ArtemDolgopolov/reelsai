@@ -105,6 +105,11 @@ const scriptBody = computed(() => {
   return joined.replace(/\s+/g, ' ').trim()
 })
 
+/** Original-language sections for normal reel view (translation only after Remix). */
+const viewOriginalHook = computed(() => (selectedReel.value?.original_hook || '').trim())
+const viewOriginalScript = computed(() => (selectedReel.value?.original_script || '').trim())
+const viewOriginalCta = computed(() => (selectedReel.value?.original_cta || '').trim())
+
 const overviewParagraphs = computed(() =>
   (selectedReel.value?.overview || '')
     .split(/\n\n+/)
@@ -126,7 +131,11 @@ const isOverviewStub = computed(() => {
 const hasRemixDrafts = computed(() => {
   const reel = selectedReel.value
   if (!reel) return false
-  return Boolean((reel.hook || '').trim() || (reel.script || '').trim() || (reel.cta || '').trim())
+  return Boolean(
+    (reel.original_hook || reel.hook || '').trim() ||
+      (reel.original_script || reel.script || '').trim() ||
+      (reel.original_cta || reel.cta || '').trim(),
+  )
 })
 
 const isAnalysisLoading = computed(() => {
@@ -341,7 +350,11 @@ function startSpeechPolling(reelId) {
 }
 
 async function copySection(section) {
-  const value = selectedReel.value?.[section] || ''
+  const reel = selectedReel.value
+  if (!reel) return
+  const value = remixMode.value
+    ? reel?.[section] || ''
+    : reel?.[`original_${section}`] || reel?.[section] || ''
   if (!value) return
   try {
     await navigator.clipboard.writeText(value)
@@ -1663,45 +1676,18 @@ onBeforeUnmount(() => {
                       <span class="insight-icon"><Zap :size="18" fill="currentColor" /></span>
                       <span>
                         <strong>Hook</strong>
-                        <small>Первые секунды — стоп-скролл.</small>
+                        <small>Оригинал · первые секунды</small>
                       </span>
-                      <div v-if="editingSection !== 'hook'" class="insight-actions">
+                      <div class="insight-actions">
                         <button type="button" @click="copySection('hook')">
                           <Copy :size="14" />
                           {{ copiedSection === 'hook' ? 'Скопировано' : 'Копировать' }}
                         </button>
-                        <button type="button" @click="startEditing('hook')">
-                          <Pencil :size="14" /> Редактировать
-                        </button>
                       </div>
                     </div>
-                    <div v-if="editingSection === 'hook'" class="section-editor">
-                      <textarea
-                        v-model="draft"
-                        rows="3"
-                        :maxlength="sectionLimits.hook"
-                        autofocus
-                        @keydown.ctrl.enter.prevent="saveSection('hook')"
-                      ></textarea>
-                      <div class="editor-actions">
-                        <span>Ctrl + Enter, чтобы сохранить</span>
-                        <button class="cancel-button" type="button" @click="cancelEditing">
-                          <X :size="14" /> Отмена
-                        </button>
-                        <button
-                          class="save-button"
-                          type="button"
-                          :disabled="saveState === 'saving' || !draft.trim()"
-                          @click="saveSection('hook')"
-                        >
-                          <Save :size="14" />
-                          {{ saveState === 'saving' ? 'Сохраняем...' : 'Сохранить' }}
-                        </button>
-                      </div>
-                    </div>
-                    <blockquote v-else>«{{ selectedReel.hook || 'Добавь hook вручную' }}»</blockquote>
+                    <blockquote>«{{ viewOriginalHook || 'Ждём расшифровку оригинала' }}»</blockquote>
                     <span class="counter">
-                      {{ editingSection === 'hook' ? draft.length : (selectedReel.hook || '').length }}/{{ sectionLimits.hook }}
+                      {{ viewOriginalHook.length }}/{{ sectionLimits.hook }}
                     </span>
                   </article>
 
@@ -1710,46 +1696,19 @@ onBeforeUnmount(() => {
                       <span class="insight-icon"><FileText :size="18" /></span>
                       <span>
                         <strong>Script</strong>
-                        <small>Структура и ключевые тезисы.</small>
+                        <small>Оригинал · основной текст</small>
                       </span>
-                      <div v-if="editingSection !== 'script'" class="insight-actions">
+                      <div class="insight-actions">
                         <button type="button" @click="copySection('script')">
                           <Copy :size="14" />
                           {{ copiedSection === 'script' ? 'Скопировано' : 'Копировать' }}
                         </button>
-                        <button type="button" @click="startEditing('script')">
-                          <Pencil :size="14" /> Редактировать
-                        </button>
                       </div>
                     </div>
-                    <div v-if="editingSection === 'script'" class="section-editor">
-                      <textarea
-                        v-model="draft"
-                        rows="7"
-                        :maxlength="sectionLimits.script"
-                        autofocus
-                        @keydown.ctrl.enter.prevent="saveSection('script')"
-                      ></textarea>
-                      <div class="editor-actions">
-                        <span>Каждый пункт с новой строки</span>
-                        <button class="cancel-button" type="button" @click="cancelEditing">
-                          <X :size="14" /> Отмена
-                        </button>
-                        <button
-                          class="save-button"
-                          type="button"
-                          :disabled="saveState === 'saving' || !draft.trim()"
-                          @click="saveSection('script')"
-                        >
-                          <Save :size="14" />
-                          {{ saveState === 'saving' ? 'Сохраняем...' : 'Сохранить' }}
-                        </button>
-                      </div>
-                    </div>
-                    <p v-if="scriptBody" class="script-prose">{{ scriptBody }}</p>
-                    <p v-else class="preserve-lines">Добавь скрипт вручную</p>
+                    <p v-if="viewOriginalScript" class="script-prose">{{ viewOriginalScript }}</p>
+                    <p v-else class="preserve-lines">Ждём расшифровку оригинала</p>
                     <span class="counter">
-                      {{ editingSection === 'script' ? draft.length : scriptBody.length }}/{{ sectionLimits.script }}
+                      {{ viewOriginalScript.length }}/{{ sectionLimits.script }}
                     </span>
                   </article>
 
@@ -1758,47 +1717,20 @@ onBeforeUnmount(() => {
                       <span class="insight-icon"><Target :size="18" /></span>
                       <span>
                         <strong>Call to Action</strong>
-                        <small>Призыв в финале ролика.</small>
+                        <small>Оригинал · финал ролика</small>
                       </span>
-                      <div v-if="editingSection !== 'cta'" class="insight-actions">
+                      <div class="insight-actions">
                         <button type="button" @click="copySection('cta')">
                           <Copy :size="14" />
                           {{ copiedSection === 'cta' ? 'Скопировано' : 'Копировать' }}
                         </button>
-                        <button type="button" @click="startEditing('cta')">
-                          <Pencil :size="14" /> Редактировать
-                        </button>
                       </div>
                     </div>
-                    <div v-if="editingSection === 'cta'" class="section-editor">
-                      <textarea
-                        v-model="draft"
-                        rows="4"
-                        :maxlength="sectionLimits.cta"
-                        autofocus
-                        @keydown.ctrl.enter.prevent="saveSection('cta')"
-                      ></textarea>
-                      <div class="editor-actions">
-                        <span>Ctrl + Enter, чтобы сохранить</span>
-                        <button class="cancel-button" type="button" @click="cancelEditing">
-                          <X :size="14" /> Отмена
-                        </button>
-                        <button
-                          class="save-button"
-                          type="button"
-                          :disabled="saveState === 'saving' || !draft.trim()"
-                          @click="saveSection('cta')"
-                        >
-                          <Save :size="14" />
-                          {{ saveState === 'saving' ? 'Сохраняем...' : 'Сохранить' }}
-                        </button>
-                      </div>
-                    </div>
-                    <p v-else class="preserve-lines">
-                      {{ selectedReel.cta || 'Сохрани и попробуй этот формат в своём следующем рилсе.' }}
+                    <p class="preserve-lines">
+                      {{ viewOriginalCta || 'В оригинале нет явного CTA' }}
                     </p>
                     <span class="counter">
-                      {{ editingSection === 'cta' ? draft.length : (selectedReel.cta || '').length }}/{{ sectionLimits.cta }}
+                      {{ viewOriginalCta.length }}/{{ sectionLimits.cta }}
                     </span>
                   </article>
 

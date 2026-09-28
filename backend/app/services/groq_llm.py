@@ -407,16 +407,17 @@ def translate_cta_to_russian(original_cta: str, *, allow_wait: bool = True) -> s
 
     system = (
         "Ты переводчик финального призыва к действию в Reels. "
-        "Переведи ТОЛЬКО этот CTA на русский, сохранив конкретный смысл "
+        "Переведи ВЕСЬ CTA на русский целиком, сохранив конкретный смысл "
         "(какой комментарий написать, на что подписаться, что сделать). "
+        "Не обрывай фразу на середине. "
         "Запрещено подставлять общие фразы вроде «сохрани и попробуй этот формат». "
-        "Верни только текст перевода, без кавычек и пояснений."
+        "Верни только полный текст перевода, без кавычек и пояснений."
     )
     raw = groq_chat(
         system=system,
         user=f"CTA оригинал:\n{spoken[:500]}",
         temperature=0.1,
-        max_tokens=220,
+        max_tokens=350,
         allow_wait=allow_wait,
     )
     if not raw:
@@ -424,7 +425,31 @@ def translate_cta_to_russian(original_cta: str, *, allow_wait: bool = True) -> s
     cleaned = re.sub(r"\s+", " ", raw).strip().strip("\"'«»")
     if len(cleaned) < 6 or _latin_share(cleaned) > 0.45 or _is_placeholder_cta(cleaned):
         return None
+    # Reject clearly truncated translations (much shorter than source).
+    if len(spoken) >= 40 and len(cleaned) < max(24, int(len(spoken) * 0.35)):
+        return None
+    if cleaned.endswith((" точ", " мо", " и", " в", " на", " для", " что", " как")):
+        return None
     return cleaned[:500]
+
+
+def _translation_incomplete(original: str, translated: str) -> bool:
+    """Heuristic: RU text looks cut off vs the source fragment."""
+    src = (original or "").strip()
+    dst = (translated or "").strip()
+    if not src:
+        return False
+    if not dst:
+        return True
+    if _is_placeholder_cta(dst):
+        return True
+    if len(src) >= 40 and len(dst) < max(24, int(len(src) * 0.35)):
+        return True
+    # Ends with a dangling partial word / preposition — common truncation artifact.
+    if re.search(r"\s[а-яё]{1,3}$", dst, flags=re.I) and not dst.endswith((".", "!", "?", "…")):
+        if len(dst) < len(src) * 0.7:
+            return True
+    return False
 
 
 def remix_bilingual_bundle(
@@ -486,7 +511,7 @@ def remix_bilingual_bundle(
         system=system,
         user="\n\n".join(user_parts),
         temperature=0.1,
-        max_tokens=1000,
+        max_tokens=1400,
         allow_wait=True,
     )
 
@@ -505,7 +530,12 @@ def remix_bilingual_bundle(
         if maybe_script and _latin_share(maybe_script) < 0.45:
             script_ru = maybe_script
         # Reject stock CTA placeholders even if the model returned Russian.
-        if maybe_cta and _latin_share(maybe_cta) < 0.45 and not _is_placeholder_cta(maybe_cta):
+        if (
+            maybe_cta
+            and _latin_share(maybe_cta) < 0.45
+            and not _is_placeholder_cta(maybe_cta)
+            and not _translation_incomplete(orig_cta, maybe_cta)
+        ):
             cta_ru = maybe_cta
         if maybe_overview and _latin_share(maybe_overview) < 0.45:
             overview = maybe_overview[:1600]
@@ -515,23 +545,24 @@ def remix_bilingual_bundle(
         hook_ru = (_translate_piece(orig_hook, limit=200) or "")[:200]
     if not script_ru and orig_script:
         script_ru = (_translate_piece(orig_script, limit=2000) or "")[:2000]
+    if hook_ru and orig_hook and _translation_incomplete(orig_hook, hook_ru):
+        hook_ru = (_translate_piece(orig_hook, limit=200) or hook_ru)[:200]
+    if script_ru and orig_script and _translation_incomplete(orig_script, script_ru):
+        script_ru = (_translate_piece(orig_script, limit=2000) or script_ru)[:2000]
 
-    # CTA: if we have a real original, ALWAYS force a real translation of THAT text.
+    # CTA: if we have a real original, ALWAYS force a complete translation of THAT text.
     if orig_cta:
-        if _is_placeholder_cta(cta_ru):
+        if _is_placeholder_cta(cta_ru) or _translation_incomplete(orig_cta, cta_ru):
             cta_ru = ""
-        if not cta_ru:
-            cta_ru = translate_cta_to_russian(orig_cta, allow_wait=True) or ""
+        # Prefer dedicated CTA translator first — JSON often truncates the last field.
+        dedicated = translate_cta_to_russian(orig_cta, allow_wait=True) or ""
+        if dedicated and not _translation_incomplete(orig_cta, dedicated):
+            cta_ru = dedicated
         if not cta_ru:
             cta_ru = (_translate_piece(orig_cta, limit=500) or "")[:500]
-        if _is_placeholder_cta(cta_ru):
-            # Still better to retry once more with dedicated CTA prompt than stock line.
+        if _is_placeholder_cta(cta_ru) or _translation_incomplete(orig_cta, cta_ru):
             cta_ru = translate_cta_to_russian(orig_cta, allow_wait=True) or cta_ru
-        if _is_placeholder_cta(cta_ru):
-            # Last resort: keep a literal-ish RU attempt marker rather than wrong stock CTA.
-            # Prefer empty-ish failure → try one more plain translate.
-            cta_ru = (_translate_piece(orig_cta, limit=500) or "")[:500]
-        if _is_placeholder_cta(cta_ru):
+        if _is_placeholder_cta(cta_ru) or _translation_incomplete(orig_cta, cta_ru):
             return None
     else:
         if _is_placeholder_cta(cta_ru):
