@@ -31,12 +31,15 @@ _enrich_inflight: set[str] = set()
 
 _PLACEHOLDER_MARKERS = (
     "собираю объяснение",
+    "собираю разбор",
     "собрал структуру ремикса",
-    "через пару секунд текст уточнится",
+    "через пару секунд",
+    "готовлю короткое объяснение",
     "пока мало контекста",
     "ниже — стартовые",
     "ниже — рабочие заготовки",
     "кратко по речи автора",
+    "появится summary",
 )
 
 _TOPIC_HINTS = (
@@ -421,8 +424,11 @@ def _analysis_worker(reel_id: UUID) -> None:
             reel.hook = hook[:200]
             reel.script = script[:2000]
             reel.cta = (cta or DEFAULT_CTA)[:500]
-            if _is_ai_overview(overview):
-                reel.analysis_overview = overview[:4000]
+            # Persist both real Groq summaries and local fallback so the UI
+            # never stays forever on "через пару секунд появится summary".
+            cleaned = (overview or "").strip()
+            if cleaned and not any(marker in cleaned.lower() for marker in _PLACEHOLDER_MARKERS):
+                reel.analysis_overview = cleaned[:4000]
             session.add(reel)
             session.commit()
             if pending:
