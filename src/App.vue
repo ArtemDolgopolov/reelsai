@@ -423,6 +423,13 @@ async function startRemix(reelId) {
   remixLoading.value = true
   remixMessage.value = 'Готовим русский сценарий: перевод и разбивка на хук / скрипт / CTA…'
   saveError.value = ''
+  // Clear stale RU fields so the UI doesn't flash old translation → new one.
+  selectedReel.value = {
+    ...selectedReel.value,
+    hook: '',
+    script: '',
+    cta: '',
+  }
   try {
     const response = await fetch(`/api/reels/${reelId}/remix`, { method: 'POST' })
     const body = await response.json()
@@ -1408,13 +1415,16 @@ onBeforeUnmount(() => {
                       <span class="bilingual-label">Оригинал</span>
                       <div class="bilingual-pane original-pane compact">
                         <p v-if="selectedReel.original_hook">{{ selectedReel.original_hook }}</p>
-                        <p v-else-if="selectedReel.speech_pending || remixLoading" class="bilingual-empty">Расшифровываем речь…</p>
+                        <p v-else-if="selectedReel.speech_pending" class="bilingual-empty">Расшифровываем речь…</p>
                         <p v-else class="bilingual-empty">Нет текста для хука</p>
                       </div>
                     </div>
                     <div class="bilingual-col">
                       <span class="bilingual-label">Перевод</span>
-                      <div class="bilingual-pane translation-pane compact">
+                      <div
+                        class="bilingual-pane translation-pane compact"
+                        :class="{ 'is-loading': remixLoading && editingSection !== 'hook' }"
+                      >
                         <textarea
                           v-if="editingSection === 'hook'"
                           v-model="draft"
@@ -1423,8 +1433,11 @@ onBeforeUnmount(() => {
                           autofocus
                           @keydown.ctrl.enter.prevent="saveSection('hook')"
                         ></textarea>
+                        <div v-else-if="remixLoading" class="remix-skel" aria-hidden="true">
+                          <span></span><span></span><span></span>
+                        </div>
                         <p v-else-if="selectedReel.hook">{{ selectedReel.hook }}</p>
-                        <p v-else class="bilingual-empty">{{ remixLoading ? 'Готовим перевод…' : 'Перевод появится после Remix' }}</p>
+                        <p v-else class="bilingual-empty">Перевод появится после Remix</p>
                       </div>
                     </div>
                   </div>
@@ -1468,15 +1481,18 @@ onBeforeUnmount(() => {
                   <div class="bilingual-grid">
                     <div class="bilingual-col">
                       <span class="bilingual-label">Оригинал</span>
-                      <div class="bilingual-pane original-pane">
+                      <div class="bilingual-pane original-pane script-pane">
                         <p v-if="selectedReel.original_script">{{ selectedReel.original_script }}</p>
-                        <p v-else-if="selectedReel.speech_pending || remixLoading" class="bilingual-empty">Расшифровываем речь…</p>
+                        <p v-else-if="selectedReel.speech_pending" class="bilingual-empty">Расшифровываем речь…</p>
                         <p v-else class="bilingual-empty">Нет текста для скрипта</p>
                       </div>
                     </div>
                     <div class="bilingual-col">
                       <span class="bilingual-label">Перевод</span>
-                      <div class="bilingual-pane translation-pane">
+                      <div
+                        class="bilingual-pane translation-pane script-pane"
+                        :class="{ 'is-loading': remixLoading && editingSection !== 'script' }"
+                      >
                         <textarea
                           v-if="editingSection === 'script'"
                           v-model="draft"
@@ -1485,8 +1501,11 @@ onBeforeUnmount(() => {
                           autofocus
                           @keydown.ctrl.enter.prevent="saveSection('script')"
                         ></textarea>
+                        <div v-else-if="remixLoading" class="remix-skel" aria-hidden="true">
+                          <span></span><span></span><span></span>
+                        </div>
                         <p v-else-if="scriptBody">{{ scriptBody }}</p>
-                        <p v-else class="bilingual-empty">{{ remixLoading ? 'Готовим перевод…' : 'Перевод появится после Remix' }}</p>
+                        <p v-else class="bilingual-empty">Перевод появится после Remix</p>
                       </div>
                     </div>
                   </div>
@@ -1532,13 +1551,16 @@ onBeforeUnmount(() => {
                       <span class="bilingual-label">Оригинал</span>
                       <div class="bilingual-pane original-pane compact">
                         <p v-if="selectedReel.original_cta">{{ selectedReel.original_cta }}</p>
-                        <p v-else-if="selectedReel.speech_pending || remixLoading" class="bilingual-empty">Расшифровываем речь…</p>
+                        <p v-else-if="selectedReel.speech_pending" class="bilingual-empty">Расшифровываем речь…</p>
                         <p v-else class="bilingual-empty">В оригинале нет явного CTA</p>
                       </div>
                     </div>
                     <div class="bilingual-col">
                       <span class="bilingual-label">Перевод</span>
-                      <div class="bilingual-pane translation-pane compact">
+                      <div
+                        class="bilingual-pane translation-pane compact"
+                        :class="{ 'is-loading': remixLoading && editingSection !== 'cta' }"
+                      >
                         <textarea
                           v-if="editingSection === 'cta'"
                           v-model="draft"
@@ -1547,8 +1569,11 @@ onBeforeUnmount(() => {
                           autofocus
                           @keydown.ctrl.enter.prevent="saveSection('cta')"
                         ></textarea>
+                        <div v-else-if="remixLoading" class="remix-skel" aria-hidden="true">
+                          <span></span><span></span>
+                        </div>
                         <p v-else-if="selectedReel.cta">{{ selectedReel.cta }}</p>
-                        <p v-else class="bilingual-empty">{{ remixLoading ? 'Готовим перевод…' : 'Перевод появится после Remix' }}</p>
+                        <p v-else class="bilingual-empty">Перевод появится после Remix</p>
                       </div>
                     </div>
                   </div>

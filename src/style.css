@@ -1697,20 +1697,23 @@ img {
 }
 
 .bilingual-script-card {
-  padding-bottom: 14px;
+  padding-bottom: 28px;
 }
 
 .bilingual-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px;
-  margin-top: 4px;
+  margin-top: 10px;
+  align-items: stretch;
 }
 
 .bilingual-col {
   min-width: 0;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
+  height: 100%;
 }
 
 .bilingual-label {
@@ -1722,19 +1725,31 @@ img {
 }
 
 .bilingual-pane {
-  min-height: 160px;
-  max-height: 320px;
+  flex: 1 1 auto;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 168px;
+  height: 168px;
   overflow: auto;
   padding: 14px;
   border-radius: 12px;
   border: 1px solid #e2e8f0;
   font-size: 0.95rem;
   line-height: 1.55;
+  text-align: left;
+  display: block;
+  align-content: start;
 }
 
-.bilingual-pane p {
+.bilingual-pane p,
+.insight-card .bilingual-pane p {
   margin: 0;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
   white-space: pre-wrap;
+  text-align: left;
 }
 
 .bilingual-pane.original-pane {
@@ -1748,25 +1763,60 @@ img {
 }
 
 .bilingual-pane.compact {
-  min-height: 88px;
-  max-height: 180px;
+  min-height: 112px;
+  height: 112px;
+}
+
+.bilingual-pane.script-pane {
+  min-height: 220px;
+  height: 220px;
 }
 
 .bilingual-pane textarea {
+  display: block;
+  box-sizing: border-box;
   width: 100%;
-  min-height: 200px;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
   border: 0;
   background: transparent;
-  resize: vertical;
+  resize: none;
   font: inherit;
   line-height: 1.55;
   color: inherit;
+  text-align: left;
   outline: none;
 }
 
 .bilingual-empty {
   color: #94a3b8;
 }
+
+.bilingual-pane.is-loading {
+  display: grid;
+  align-content: start;
+}
+
+.bilingual-pane .remix-skel {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+
+.bilingual-pane .remix-skel span {
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #e2e8f0 0%, #f8fafc 45%, #e2e8f0 100%);
+  background-size: 220% 100%;
+  animation: analysis-shimmer 1.2s ease-in-out infinite;
+}
+
+.bilingual-pane .remix-skel span:nth-child(1) { width: 92%; }
+.bilingual-pane .remix-skel span:nth-child(2) { width: 78%; }
+.bilingual-pane .remix-skel span:nth-child(3) { width: 86%; }
 
 .bilingual-editor-actions {
   margin-top: 12px;
@@ -1775,6 +1825,14 @@ img {
 @media (max-width: 900px) {
   .bilingual-grid {
     grid-template-columns: 1fr;
+  }
+
+  .bilingual-pane,
+  .bilingual-pane.compact,
+  .bilingual-pane.script-pane {
+    height: auto;
+    min-height: 120px;
+    max-height: 260px;
   }
 }
 
