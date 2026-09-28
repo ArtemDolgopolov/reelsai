@@ -776,17 +776,30 @@ img {
 
 .compact-plan-row {
   display: flex;
+  width: 100%;
   margin-top: 8px;
 }
 
-.compact-plan-chip {
-  height: 30px;
-  padding: 0 10px;
+.compact-plan-chip,
+.compact-status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  min-height: 32px;
+  height: auto;
+  padding: 6px 10px;
   font-size: 10px;
+  font-weight: 700;
+  border-radius: 9px;
+  box-sizing: border-box;
 }
 
-.compact-plan-row .shoot-status-group {
-  margin-left: 0;
+.compact-status-chip {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .mini-avatar {

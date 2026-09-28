@@ -1160,42 +1160,8 @@ onBeforeUnmount(() => {
                   <span>{{ formatViews(reel.likes_count) }} likes</span>
                 </div>
                 <div class="compact-plan-row">
-                  <div
-                    v-if="reel.in_plan || planEntryForReel(reel.id)"
-                    class="shoot-status-group"
-                    role="group"
-                    aria-label="Статус съёмки"
-                  >
-                    <button
-                      type="button"
-                      class="shoot-status-button todo"
-                      :class="{ active: (planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) === 'todo' }"
-                      title="Не взят в работу"
-                      @click.stop="setShootStatusForReel(reel.id, 'todo')"
-                    >
-                      <X :size="11" />
-                    </button>
-                    <button
-                      type="button"
-                      class="shoot-status-button ready"
-                      :class="{ active: (planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) === 'ready' }"
-                      title="Ждёт съёмки"
-                      @click.stop="setShootStatusForReel(reel.id, 'ready')"
-                    >
-                      <Hourglass :size="11" />
-                    </button>
-                    <button
-                      type="button"
-                      class="shoot-status-button done"
-                      :class="{ active: (planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) === 'done' }"
-                      title="Снят и выложен"
-                      @click.stop="setShootStatusForReel(reel.id, 'done')"
-                    >
-                      <Check :size="11" />
-                    </button>
-                  </div>
                   <button
-                    v-else
+                    v-if="!(reel.in_plan || planEntryForReel(reel.id))"
                     class="ghost-button plan-chip compact-plan-chip"
                     type="button"
                     :disabled="planBusyReelId === reel.id"
@@ -1203,6 +1169,23 @@ onBeforeUnmount(() => {
                   >
                     + В план
                   </button>
+                  <span
+                    v-else
+                    class="status-chip compact-status-chip readonly"
+                    :class="(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status || 'todo')"
+                    :title="shootStatusLabel(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status)"
+                  >
+                    <CircleX
+                      v-if="(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) === 'todo'"
+                      :size="12"
+                    />
+                    <Timer
+                      v-else-if="(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) === 'ready'"
+                      :size="12"
+                    />
+                    <CircleCheck v-else :size="12" />
+                    {{ shootStatusLabel(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) }}
+                  </span>
                 </div>
               </article>
             </div>
