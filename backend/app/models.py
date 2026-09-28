@@ -115,9 +115,12 @@ class Reel(SQLModel, table=True):
 
 class ContentPlanItem(SQLModel, table=True):
     __tablename__ = "content_plan_items"
-    __table_args__ = (UniqueConstraint("reel_id", name="uq_content_plan_reel_id"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "reel_id", name="uq_content_plan_user_reel"),
+    )
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
+    user_id: UUID = Field(foreign_key="users.id", index=True)
     reel_id: UUID = Field(foreign_key="reels.id", index=True)
     shoot_status: ShootStatus = Field(default=ShootStatus.todo, index=True)
     created_at: datetime = Field(
@@ -130,6 +133,22 @@ class ContentPlanItem(SQLModel, table=True):
             onupdate=func.now(),
             nullable=False,
         )
+    )
+
+
+class UserCompetitorTrack(SQLModel, table=True):
+    """Per-user saved competitors. Scraped Competitor/Reel rows stay shared cache."""
+
+    __tablename__ = "user_competitor_tracks"
+    __table_args__ = (
+        UniqueConstraint("user_id", "competitor_id", name="uq_user_competitor_track"),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    user_id: UUID = Field(foreign_key="users.id", index=True)
+    competitor_id: UUID = Field(foreign_key="competitors.id", index=True)
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     )
 
 

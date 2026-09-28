@@ -6,13 +6,14 @@ from sqlmodel import Session, col, select
 from app.config import get_settings
 from app.db import get_session
 from app.deps import get_current_user
-from app.models import Competitor, ContentPlanItem, Reel
+from app.models import Competitor, ContentPlanItem, Reel, User, UserCompetitorTrack
 from app.schemas import ReelDetail, ReelListItem, ReelUpdateRequest
 from app.services.instagram_free import looks_like_real_transcript
 from app.services.overview import prepare_russian_remix, schedule_analysis
 from app.services.groq_llm import last_groq_failure
 from app.services.serializers import reel_to_detail, reel_to_list_item
 from app.services.stt_jobs import ensure_reel_transcript, schedule_transcripts
+from app.services import tenancy
 from app.services.transcript_sections import DEFAULT_CTA
 
 router = APIRouter(
@@ -41,13 +42,36 @@ def require_editor(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Editing is not allowed from this IP address")
 
 
-def _plan_map(session: Session, reel_ids: list[UUID]) -> dict[UUID, ContentPlanItem]:
+def _plan_map(
+    session: Session,
+    user_id: UUID,
+    reel_ids: list[UUID],
+) -> dict[UUID, ContentPlanItem]:
     if not reel_ids:
         return {}
     rows = session.exec(
-        select(ContentPlanItem).where(col(ContentPlanItem.reel_id).in_(reel_ids))
+        select(ContentPlanItem).where(
+            ContentPlanItem.user_id == user_id,
+            col(ContentPlanItem.reel_id).in_(reel_ids),
+        )
     ).all()
     return {item.reel_id: item for item in rows}
+
+
+def _require_tracked_reel(
+    session: Session,
+    user: User,
+    reel_id: UUID,
+) -> tuple[Reel, Competitor]:
+    reel = session.get(Reel, reel_id)
+    if reel is None:
+        raise HTTPException(status_code=404, detail="Reel not found")
+    competitor = session.get(Competitor, reel.competitor_id)
+    if competitor is None or not tenancy.user_tracks_competitor(
+        session, user.id, competitor.id
+    ):
+        raise HTTPException(status_code=404, detail="Reel not found")
+    return reel, competitor
 
 
 @router.get("", response_model=list[ReelListItem])
@@ -55,17 +79,22 @@ def list_reels(
     limit: int = Query(default=40, ge=1, le=100),
     q: str | None = Query(default=None),
     session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> list[ReelListItem]:
-    """Home feed: reels from saved (tracked) competitors only — no random discovery."""
+    """Home feed: reels from this user's saved competitors only."""
     rows = session.exec(
         select(Reel, Competitor)
+        .join(
+            UserCompetitorTrack,
+            col(UserCompetitorTrack.competitor_id) == Competitor.id,
+        )
         .where(Reel.competitor_id == Competitor.id)
-        .where(Competitor.tracked.is_(True))
+        .where(UserCompetitorTrack.user_id == user.id)
         .order_by(col(Reel.views_count).desc(), col(Reel.posted_at).desc().nulls_last())
         .limit(limit)
     ).all()
 
-    plans = _plan_map(session, [reel.id for reel, _ in rows])
+    plans = _plan_map(session, user.id, [reel.id for reel, _ in rows])
     items = [
         reel_to_list_item(reel, competitor.username, plan_item=plans.get(reel.id))
         for reel, competitor in rows
@@ -86,13 +115,9 @@ def get_reel(
     reel_id: UUID,
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> ReelDetail:
-    reel = session.get(Reel, reel_id)
-    if reel is None:
-        raise HTTPException(status_code=404, detail="Reel not found")
-    competitor = session.get(Competitor, reel.competitor_id)
-    if competitor is None:
-        raise HTTPException(status_code=404, detail="Competitor not found")
+    reel, competitor = _require_tracked_reel(session, user, reel_id)
 
     # Instant response — refine Hook/Script/CTA from speech in the background.
     if reel.transcript is None:
@@ -108,17 +133,13 @@ def get_reel(
 def refresh_reel_video(
     reel_id: UUID,
     session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> ReelDetail:
     """Refresh expired Instagram CDN video_url for in-app playback."""
     from app.services.instagram_free import InstagramFreeClient
     from app.services.stt_jobs import _refresh_video_url
 
-    reel = session.get(Reel, reel_id)
-    if reel is None:
-        raise HTTPException(status_code=404, detail="Reel not found")
-    competitor = session.get(Competitor, reel.competitor_id)
-    if competitor is None:
-        raise HTTPException(status_code=404, detail="Competitor not found")
+    reel, competitor = _require_tracked_reel(session, user, reel_id)
 
     client = InstagramFreeClient()
     fresh = _refresh_video_url(client, reel, competitor.username)
@@ -136,14 +157,10 @@ def refresh_reel_video(
 def remix_reel(
     reel_id: UUID,
     session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> ReelDetail:
     """Build a Russian remix script from the original transcript for filming."""
-    reel = session.get(Reel, reel_id)
-    if reel is None:
-        raise HTTPException(status_code=404, detail="Reel not found")
-    competitor = session.get(Competitor, reel.competitor_id)
-    if competitor is None:
-        raise HTTPException(status_code=404, detail="Competitor not found")
+    reel, competitor = _require_tracked_reel(session, user, reel_id)
 
     # Need spoken transcript (or empty marker) before adapting.
     if reel.transcript is None:
@@ -190,20 +207,17 @@ def remix_reel(
         }
     )
 
+
 @router.patch("/{reel_id}", response_model=ReelDetail)
 def update_reel(
     reel_id: UUID,
     payload: ReelUpdateRequest,
     request: Request,
     session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> ReelDetail:
     require_editor(request)
-    reel = session.get(Reel, reel_id)
-    if reel is None:
-        raise HTTPException(status_code=404, detail="Reel not found")
-    competitor = session.get(Competitor, reel.competitor_id)
-    if competitor is None:
-        raise HTTPException(status_code=404, detail="Competitor not found")
+    reel, competitor = _require_tracked_reel(session, user, reel_id)
 
     limit = SECTION_LIMITS[payload.section]
     value = payload.value.strip()[:limit]

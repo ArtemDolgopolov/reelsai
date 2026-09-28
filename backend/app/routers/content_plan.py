@@ -6,13 +6,14 @@ from sqlmodel import Session, col, select
 
 from app.db import get_session
 from app.deps import get_current_user
-from app.models import Competitor, ContentPlanItem, Reel, ShootStatus
+from app.models import Competitor, ContentPlanItem, Reel, ShootStatus, User
 from app.schemas import (
     ContentPlanCreateRequest,
     ContentPlanItemRead,
     ContentPlanUpdateRequest,
 )
 from app.services.serializers import format_duration
+from app.services import tenancy
 
 router = APIRouter(
     prefix="/content-plan",
@@ -44,10 +45,25 @@ def _to_read(item: ContentPlanItem, reel: Reel, username: str) -> ContentPlanIte
     )
 
 
+def _owned_plan_item(
+    session: Session,
+    user: User,
+    item_id: UUID,
+) -> ContentPlanItem:
+    item = session.get(ContentPlanItem, item_id)
+    if item is None or item.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Content plan item not found")
+    return item
+
+
 @router.get("", response_model=list[ContentPlanItemRead])
-def list_content_plan(session: Session = Depends(get_session)) -> list[ContentPlanItemRead]:
+def list_content_plan(
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> list[ContentPlanItemRead]:
     rows = session.exec(
         select(ContentPlanItem, Reel, Competitor)
+        .where(ContentPlanItem.user_id == user.id)
         .where(ContentPlanItem.reel_id == Reel.id)
         .where(Reel.competitor_id == Competitor.id)
         .order_by(col(ContentPlanItem.updated_at).desc())
@@ -59,21 +75,31 @@ def list_content_plan(session: Session = Depends(get_session)) -> list[ContentPl
 def add_to_content_plan(
     payload: ContentPlanCreateRequest,
     session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> ContentPlanItemRead:
     reel = session.get(Reel, payload.reel_id)
     if reel is None:
         raise HTTPException(status_code=404, detail="Reel not found")
     competitor = session.get(Competitor, reel.competitor_id)
-    if competitor is None:
-        raise HTTPException(status_code=404, detail="Competitor not found")
+    if competitor is None or not tenancy.user_tracks_competitor(
+        session, user.id, competitor.id
+    ):
+        raise HTTPException(status_code=404, detail="Reel not found")
 
     existing = session.exec(
-        select(ContentPlanItem).where(ContentPlanItem.reel_id == payload.reel_id)
+        select(ContentPlanItem).where(
+            ContentPlanItem.user_id == user.id,
+            ContentPlanItem.reel_id == payload.reel_id,
+        )
     ).first()
     if existing is not None:
         return _to_read(existing, reel, competitor.username)
 
-    item = ContentPlanItem(reel_id=payload.reel_id, shoot_status=ShootStatus.todo)
+    item = ContentPlanItem(
+        user_id=user.id,
+        reel_id=payload.reel_id,
+        shoot_status=ShootStatus.todo,
+    )
     session.add(item)
     session.commit()
     session.refresh(item)
@@ -85,10 +111,9 @@ def update_content_plan_item(
     item_id: UUID,
     payload: ContentPlanUpdateRequest,
     session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> ContentPlanItemRead:
-    item = session.get(ContentPlanItem, item_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Content plan item not found")
+    item = _owned_plan_item(session, user, item_id)
     reel = session.get(Reel, item.reel_id)
     if reel is None:
         raise HTTPException(status_code=404, detail="Reel not found")
@@ -108,10 +133,9 @@ def update_content_plan_item(
 def remove_content_plan_item(
     item_id: UUID,
     session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> dict[str, str]:
-    item = session.get(ContentPlanItem, item_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Content plan item not found")
+    item = _owned_plan_item(session, user, item_id)
     session.delete(item)
     session.commit()
     return {"status": "ok"}

@@ -32,6 +32,7 @@ import {
   Target,
   Timer,
   Trash2,
+  UserRound,
   Users,
   Volume2,
   VolumeX,
@@ -81,6 +82,11 @@ const initialRoute = parseLocationHash()
 const currentPage = ref(initialRoute.page)
 const currentUser = ref(null)
 const authBooting = ref(true)
+const userLabel = computed(() => {
+  if (!currentUser.value) return ''
+  return currentUser.value.name || currentUser.value.email || ''
+})
+const userEmail = computed(() => currentUser.value?.email || '')
 const searchQuery = ref('')
 const competitorHandle = ref('')
 const competitorsList = ref([])
@@ -489,6 +495,11 @@ async function onAuthEntered() {
 async function onLogout() {
   await logoutAccount()
   currentUser.value = null
+  competitorsList.value = []
+  competitor.value = null
+  competitorReels.value = []
+  homeReels.value = []
+  contentPlan.value = []
   navigate('landing')
 }
 
@@ -1184,10 +1195,18 @@ onBeforeUnmount(() => {
           <span>Конкуренты</span>
         </button>
       </nav>
+      <div v-if="currentUser" class="sidebar-user">
+        <span class="sidebar-user-avatar" aria-hidden="true">
+          <UserRound :size="16" />
+        </span>
+        <div class="sidebar-user-meta">
+          <strong>{{ userLabel }}</strong>
+          <span v-if="currentUser.name && userEmail">{{ userEmail }}</span>
+        </div>
+      </div>
       <button
         class="nav-item"
         type="button"
-        style="margin-top: auto"
         @click="onLogout"
       >
         <X :size="18" />

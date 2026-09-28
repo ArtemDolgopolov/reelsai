@@ -7,7 +7,14 @@ from sqlmodel import Session, col, select
 
 from app.db import engine, get_session
 from app.deps import get_current_user
-from app.models import Competitor, CompetitorStatus, ContentPlanItem, Reel, ReelStatus
+from app.models import (
+    Competitor,
+    CompetitorStatus,
+    ContentPlanItem,
+    Reel,
+    ReelStatus,
+    User,
+)
 from app.schemas import CompetitorLoadRequest, CompetitorLoadResponse, CompetitorRead, ReelListItem
 from app.services.instagram_free import (
     FreeReelPayload,
@@ -16,6 +23,7 @@ from app.services.instagram_free import (
     looks_like_real_transcript,
 )
 from app.services.serializers import competitor_to_read, reel_to_list_item
+from app.services import tenancy
 from app.services.transcript_sections import DEFAULT_CTA, split_transcript_into_sections
 
 router = APIRouter(
@@ -193,12 +201,11 @@ def backfill_missing_transcripts() -> None:
 
 
 @router.get("", response_model=list[CompetitorRead])
-def list_competitors(session: Session = Depends(get_session)) -> list[CompetitorRead]:
-    competitors = session.exec(
-        select(Competitor)
-        .where(Competitor.tracked.is_(True))
-        .order_by(col(Competitor.updated_at).desc())
-    ).all()
+def list_competitors(
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> list[CompetitorRead]:
+    competitors = tenancy.list_tracked_competitors(session, user.id)
     return [
         competitor_to_read(item, reels_count=len(get_latest_reels(session, item.id)))
         for item in competitors
@@ -206,9 +213,13 @@ def list_competitors(session: Session = Depends(get_session)) -> list[Competitor
 
 
 @router.get("/{competitor_id}", response_model=CompetitorRead)
-def get_competitor(competitor_id: UUID, session: Session = Depends(get_session)) -> CompetitorRead:
+def get_competitor(
+    competitor_id: UUID,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> CompetitorRead:
     competitor = session.get(Competitor, competitor_id)
-    if competitor is None:
+    if competitor is None or not tenancy.user_tracks_competitor(session, user.id, competitor_id):
         raise HTTPException(status_code=404, detail="Competitor not found")
     return competitor_to_read(
         competitor,
@@ -220,15 +231,23 @@ def get_competitor(competitor_id: UUID, session: Session = Depends(get_session))
 def list_competitor_reels(
     competitor_id: UUID,
     session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> list[ReelListItem]:
     competitor = session.get(Competitor, competitor_id)
-    if competitor is None:
+    if competitor is None or not tenancy.user_tracks_competitor(session, user.id, competitor_id):
         raise HTTPException(status_code=404, detail="Competitor not found")
 
     reels = get_latest_reels(session, competitor_id)
-    plan_rows = session.exec(
-        select(ContentPlanItem).where(col(ContentPlanItem.reel_id).in_([reel.id for reel in reels]))
-    ).all() if reels else []
+    plan_rows = (
+        session.exec(
+            select(ContentPlanItem).where(
+                ContentPlanItem.user_id == user.id,
+                col(ContentPlanItem.reel_id).in_([reel.id for reel in reels]),
+            )
+        ).all()
+        if reels
+        else []
+    )
     plans = {item.reel_id: item for item in plan_rows}
     return [
         reel_to_list_item(reel, competitor.username, plan_item=plans.get(reel.id))
@@ -241,6 +260,7 @@ async def load_competitor(
     payload: CompetitorLoadRequest,
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> CompetitorLoadResponse:
     username = normalize_username(payload.username)
     if not username:
@@ -260,7 +280,7 @@ async def load_competitor(
         and not payload.force_refresh
         and datetime.now(timezone.utc) - existing_competitor.last_scraped_at < CACHE_TTL
     ):
-        existing_competitor.tracked = True
+        tenancy.ensure_user_tracks_competitor(session, user, existing_competitor)
         existing_competitor.posts_count = len(existing_reels)
         session.add(existing_competitor)
         session.commit()
@@ -284,7 +304,7 @@ async def load_competitor(
     except InstagramFreeError as exc:
         # Never substitute another creator / seed demo for the requested handle.
         if existing_competitor is not None and existing_reels:
-            existing_competitor.tracked = True
+            tenancy.ensure_user_tracks_competitor(session, user, existing_competitor)
             existing_competitor.posts_count = len(existing_reels)
             session.add(existing_competitor)
             session.commit()
@@ -317,6 +337,7 @@ async def load_competitor(
     session.add(competitor)
     session.commit()
     session.refresh(competitor)
+    tenancy.ensure_user_tracks_competitor(session, user, competitor)
 
     for item in data.reels:
         apply_reel_payload(session, competitor, item)
