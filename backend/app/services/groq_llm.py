@@ -381,6 +381,52 @@ def translate_transcript_to_russian(transcript: str, *, allow_wait: bool = True)
     return cleaned[:2000]
 
 
+def _is_placeholder_cta(text: str | None) -> bool:
+    """True for empty / generic stock CTAs that are not a real translation."""
+    from app.services.transcript_sections import DEFAULT_CTA
+
+    low = re.sub(r"\s+", " ", (text or "")).strip().lower()
+    if not low:
+        return True
+    if low == DEFAULT_CTA.lower():
+        return True
+    if "сохрани и попробуй этот формат" in low:
+        return True
+    if low in {"подпишись", "ставь лайк", "сохрани", "напиши в комментарии"}:
+        return True
+    return False
+
+
+def translate_cta_to_russian(original_cta: str, *, allow_wait: bool = True) -> str | None:
+    """Dedicated CTA translation — never invent a generic stock line."""
+    spoken = (original_cta or "").strip()
+    if not spoken:
+        return None
+    if _latin_share(spoken) < 0.35:
+        return re.sub(r"\s+", " ", spoken)[:500]
+
+    system = (
+        "Ты переводчик финального призыва к действию в Reels. "
+        "Переведи ТОЛЬКО этот CTA на русский, сохранив конкретный смысл "
+        "(какой комментарий написать, на что подписаться, что сделать). "
+        "Запрещено подставлять общие фразы вроде «сохрани и попробуй этот формат». "
+        "Верни только текст перевода, без кавычек и пояснений."
+    )
+    raw = groq_chat(
+        system=system,
+        user=f"CTA оригинал:\n{spoken[:500]}",
+        temperature=0.1,
+        max_tokens=220,
+        allow_wait=allow_wait,
+    )
+    if not raw:
+        return None
+    cleaned = re.sub(r"\s+", " ", raw).strip().strip("\"'«»")
+    if len(cleaned) < 6 or _latin_share(cleaned) > 0.45 or _is_placeholder_cta(cleaned):
+        return None
+    return cleaned[:500]
+
+
 def remix_bilingual_bundle(
     *,
     transcript: str | None,
@@ -425,6 +471,8 @@ def remix_bilingual_bundle(
         "Не меняй границы фрагментов и не добавляй новый смысл. "
         "Верни ТОЛЬКО JSON с ключами hook_ru, script_ru, cta_ru, overview. "
         "overview — 2 коротких абзаца по-русски: о чём ролик. "
+        "cta_ru обязан быть переводом именно CTA-фрагмента (комментарий / подписка / действие), "
+        "а не общей фразой «сохрани и попробуй этот формат». "
         "В hook_ru / script_ru / cta_ru не оставляй английский."
     )
     user_parts = [f"HOOK:\n{orig_hook}", f"SCRIPT:\n{orig_script}"]
@@ -456,7 +504,8 @@ def remix_bilingual_bundle(
             hook_ru = maybe_hook
         if maybe_script and _latin_share(maybe_script) < 0.45:
             script_ru = maybe_script
-        if maybe_cta and _latin_share(maybe_cta) < 0.45:
+        # Reject stock CTA placeholders even if the model returned Russian.
+        if maybe_cta and _latin_share(maybe_cta) < 0.45 and not _is_placeholder_cta(maybe_cta):
             cta_ru = maybe_cta
         if maybe_overview and _latin_share(maybe_overview) < 0.45:
             overview = maybe_overview[:1600]
@@ -466,10 +515,26 @@ def remix_bilingual_bundle(
         hook_ru = (_translate_piece(orig_hook, limit=200) or "")[:200]
     if not script_ru and orig_script:
         script_ru = (_translate_piece(orig_script, limit=2000) or "")[:2000]
-    if not cta_ru:
-        if orig_cta:
-            cta_ru = (_translate_piece(orig_cta, limit=500) or DEFAULT_CTA)[:500]
-        else:
+
+    # CTA: if we have a real original, ALWAYS force a real translation of THAT text.
+    if orig_cta:
+        if _is_placeholder_cta(cta_ru):
+            cta_ru = ""
+        if not cta_ru:
+            cta_ru = translate_cta_to_russian(orig_cta, allow_wait=True) or ""
+        if not cta_ru:
+            cta_ru = (_translate_piece(orig_cta, limit=500) or "")[:500]
+        if _is_placeholder_cta(cta_ru):
+            # Still better to retry once more with dedicated CTA prompt than stock line.
+            cta_ru = translate_cta_to_russian(orig_cta, allow_wait=True) or cta_ru
+        if _is_placeholder_cta(cta_ru):
+            # Last resort: keep a literal-ish RU attempt marker rather than wrong stock CTA.
+            # Prefer empty-ish failure → try one more plain translate.
+            cta_ru = (_translate_piece(orig_cta, limit=500) or "")[:500]
+        if _is_placeholder_cta(cta_ru):
+            return None
+    else:
+        if _is_placeholder_cta(cta_ru):
             cta_ru = DEFAULT_CTA
 
     if not hook_ru or not script_ru:
@@ -495,7 +560,7 @@ def remix_bilingual_bundle(
         "original_cta": orig_cta,
         "hook": hook_ru[:200],
         "script": script_ru[:2000],
-        "cta": (cta_ru or DEFAULT_CTA)[:500],
+        "cta": cta_ru[:500] if orig_cta else (cta_ru or DEFAULT_CTA)[:500],
         "overview": overview[:1600],
         "translation": script_ru[:2000],
     }
