@@ -147,7 +147,7 @@ const copiedSection = ref('')
 const speechPolling = ref(false)
 const analysisRevealKey = ref(0)
 
-const FLASH_MS = 4500
+const FLASH_MS = 4200
 const flashTimers = {}
 
 function clearFlash(key) {
@@ -1435,9 +1435,11 @@ onBeforeUnmount(() => {
           </div>
         </header>
 
-        <div v-if="planMessage" class="competitor-feedback">
-          <span class="success-badge"><Check :size="14" /> {{ planMessage }}</span>
-        </div>
+        <Transition name="toast">
+          <div v-if="planMessage" class="competitor-feedback" key="plan-toast">
+            <span class="success-badge"><Check :size="14" /> {{ planMessage }}</span>
+          </div>
+        </Transition>
 
         <div v-if="planItems.length" class="plan-cards">
           <article
@@ -1606,9 +1608,17 @@ onBeforeUnmount(() => {
             </button>
           </div>
 
-          <div v-if="competitorMessage || saveError" class="competitor-feedback">
-            <span v-if="competitorMessage" class="success-badge"><Check :size="14" /> {{ competitorMessage }}</span>
-            <span v-if="saveError" class="save-notice error"><CircleHelp :size="14" /> {{ saveError }}</span>
+          <div class="competitor-feedback-slot">
+            <Transition name="toast">
+              <div v-if="competitorMessage" class="competitor-feedback" key="competitor-ok">
+                <span class="success-badge"><Check :size="14" /> {{ competitorMessage }}</span>
+              </div>
+            </Transition>
+            <Transition name="toast">
+              <div v-if="saveError" class="competitor-feedback" key="competitor-err">
+                <span class="save-notice error"><CircleHelp :size="14" /> {{ saveError }}</span>
+              </div>
+            </Transition>
           </div>
 
           <div class="competitors-section">
@@ -1925,22 +1935,32 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="insight-list">
-              <div v-if="remixMessage" class="save-notice success">
-                <WandSparkles :size="15" />
-                {{ remixMessage }}
-              </div>
-              <div v-if="remixLoading" class="save-notice success">
-                <LoaderCircle :size="15" class="spin" />
-                Переводим оригинал на русский…
-              </div>
-              <div v-if="saveState === 'saved'" class="save-notice success">
-                <Check :size="15" />
-                Изменения сохранены
-              </div>
-              <div v-if="saveError" class="save-notice error">
-                <CircleHelp :size="15" />
-                {{ saveError }}
-              </div>
+            <div class="insight-toasts">
+              <Transition name="toast">
+                <div v-if="remixMessage" class="save-notice success" key="remix-msg">
+                  <WandSparkles :size="15" />
+                  {{ remixMessage }}
+                </div>
+              </Transition>
+              <Transition name="toast">
+                <div v-if="remixLoading" class="save-notice success" key="remix-loading">
+                  <LoaderCircle :size="15" class="spin" />
+                  Переводим оригинал на русский…
+                </div>
+              </Transition>
+              <Transition name="toast">
+                <div v-if="saveState === 'saved'" class="save-notice success" key="save-ok">
+                  <Check :size="15" />
+                  Изменения сохранены
+                </div>
+              </Transition>
+              <Transition name="toast">
+                <div v-if="saveError" class="save-notice error" key="save-err">
+                  <CircleHelp :size="15" />
+                  {{ saveError }}
+                </div>
+              </Transition>
+            </div>
 
               <!-- Remix: Hook → Script → CTA, оригинал | перевод (1:1) -->
               <template v-if="remixMode">

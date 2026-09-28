@@ -1235,11 +1235,52 @@ img {
   border-radius: 9px;
 }
 
+.competitor-feedback-slot {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+}
+
 .competitor-feedback {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   margin: -12px 0 20px;
+}
+
+.competitor-feedback-slot .competitor-feedback {
+  margin: 0 0 16px;
+}
+
+.insight-toasts {
+  display: grid;
+  gap: 8px;
+}
+
+.insight-toasts > .save-notice {
+  width: 100%;
+}
+
+.toast-enter-active,
+.toast-leave-active {
+  transition:
+    opacity 0.38s ease,
+    transform 0.38s ease,
+    filter 0.38s ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  filter: blur(2px);
+  transform: translateY(-8px) scale(0.98);
+}
+
+.toast-enter-to,
+.toast-leave-from {
+  opacity: 1;
+  filter: blur(0);
+  transform: translateY(0) scale(1);
 }
 
 .competitors-section {
