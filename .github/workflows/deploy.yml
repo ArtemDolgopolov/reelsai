@@ -30,6 +30,8 @@ jobs:
       - name: Sync deployment directory
         env:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          YANDEX_CLIENT_ID: ${{ secrets.YANDEX_CLIENT_ID }}
+          YANDEX_CLIENT_SECRET: ${{ secrets.YANDEX_CLIENT_SECRET }}
         run: |
           sudo mkdir -p /opt/reelsai
           sudo rsync -a --delete --exclude .git --exclude .env ./ /opt/reelsai/
@@ -50,18 +52,22 @@ jobs:
           if ! grep -q '^PUBLIC_APP_URL=' /opt/reelsai/.env; then
             echo 'PUBLIC_APP_URL=http://18.192.179.203' >> /opt/reelsai/.env
           fi
+          upsert_env() {
+            key="$1"
+            val="$2"
+            [ -z "$val" ] && return 0
+            if grep -q "^${key}=" /opt/reelsai/.env; then
+              sed -i "s|^${key}=.*|${key}=${val}|" /opt/reelsai/.env
+            else
+              echo "${key}=${val}" >> /opt/reelsai/.env
+            fi
+          }
           # Inject secrets from GitHub without committing them
+          upsert_env RESEND_API_KEY "${RESEND_API_KEY:-}"
+          upsert_env YANDEX_CLIENT_ID "${YANDEX_CLIENT_ID:-}"
+          upsert_env YANDEX_CLIENT_SECRET "${YANDEX_CLIENT_SECRET:-}"
           if [ -n "${RESEND_API_KEY:-}" ]; then
-            if grep -q '^RESEND_API_KEY=' /opt/reelsai/.env; then
-              sed -i "s|^RESEND_API_KEY=.*|RESEND_API_KEY=${RESEND_API_KEY}|" /opt/reelsai/.env
-            else
-              echo "RESEND_API_KEY=${RESEND_API_KEY}" >> /opt/reelsai/.env
-            fi
-            if grep -q '^AUTH_DEV_EXPOSE_OTP=' /opt/reelsai/.env; then
-              sed -i 's|^AUTH_DEV_EXPOSE_OTP=.*|AUTH_DEV_EXPOSE_OTP=false|' /opt/reelsai/.env
-            else
-              echo 'AUTH_DEV_EXPOSE_OTP=false' >> /opt/reelsai/.env
-            fi
+            upsert_env AUTH_DEV_EXPOSE_OTP false
           fi
           sudo chown -R "$USER":"$USER" /opt/reelsai
 
