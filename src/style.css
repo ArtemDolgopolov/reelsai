@@ -1811,7 +1811,7 @@ img {
   border-radius: 999px;
   background: linear-gradient(90deg, #e2e8f0 0%, #f8fafc 45%, #e2e8f0 100%);
   background-size: 220% 100%;
-  animation: analysis-shimmer 1.2s ease-in-out infinite;
+  animation: skel-shimmer 1.2s ease-in-out infinite;
 }
 
 .bilingual-pane .remix-skel span:nth-child(1) { width: 92%; }
