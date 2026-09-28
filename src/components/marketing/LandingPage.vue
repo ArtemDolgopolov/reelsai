@@ -21,11 +21,6 @@ defineEmits(['navigate'])
         <span class="mkt-logo-mark"><Zap :size="18" fill="currentColor" /></span>
         AI Рилс Продюсер
       </button>
-      <nav class="mkt-nav" aria-label="Навигация">
-        <a href="#landing">Возможности</a>
-        <a href="#landing">Тарифы</a>
-        <a href="#landing">Блог</a>
-      </nav>
       <div class="mkt-header-actions">
         <button class="mkt-btn mkt-btn-ghost" type="button" @click="$emit('navigate', 'login')">
           Войти
@@ -47,10 +42,6 @@ defineEmits(['navigate'])
           <button class="mkt-btn mkt-btn-primary mkt-btn-lg" type="button" @click="$emit('navigate', 'register')">
             Попробовать бесплатно
             <ArrowRight :size="18" />
-          </button>
-          <button class="mkt-btn mkt-btn-outline mkt-btn-lg" type="button" @click="$emit('navigate', 'login')">
-            <Play :size="16" fill="currentColor" />
-            Смотреть демо
           </button>
         </div>
         <div class="mkt-feature-row">
@@ -118,21 +109,6 @@ defineEmits(['navigate'])
             Сгенерировать сценарий
           </button>
         </aside>
-      </div>
-    </section>
-
-    <section class="mkt-proof">
-      <div class="mkt-proof-text">
-        <div class="mkt-avatars" aria-hidden="true">
-          <i></i><i></i><i></i><i></i>
-        </div>
-        <p>
-          Уже более <strong>10 000 креаторов</strong> создают контент с AI Рилс Продюсер
-        </p>
-      </div>
-      <div class="mkt-review">
-        <span class="mkt-stars">★★★★★</span>
-        <span>«Экономит часы работы и дает классные идеи!»</span>
       </div>
     </section>
 

@@ -806,19 +806,28 @@
 }
 
 @media (max-width: 920px) {
-  .mkt-nav {
-    display: none;
+  .mkt-header {
+    width: calc(100% - 32px);
+    gap: 12px;
   }
 
   .mkt-hero {
     grid-template-columns: 1fr;
+    gap: 28px;
+    width: calc(100% - 32px);
     padding-top: 12px;
+    padding-bottom: 36px;
+  }
+
+  .mkt-hero-copy {
+    max-width: none;
   }
 
   .mkt-stage {
     min-height: 420px;
     margin: 0 auto;
     max-width: 420px;
+    width: 100%;
   }
 
   .mkt-phone {
@@ -828,41 +837,106 @@
   .mkt-feature-row {
     grid-template-columns: 1fr;
   }
+
+  .mkt-platforms {
+    width: calc(100% - 32px);
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px 18px;
+    row-gap: 8px;
+  }
+
+  .mkt-auth {
+    padding: 0 16px 40px;
+  }
+
+  .mkt-auth-card {
+    width: min(100%, 420px);
+  }
 }
 
 @media (max-width: 560px) {
   .mkt-header {
-    width: calc(100% - 24px);
-    padding: 16px 0;
+    width: calc(100% - 20px);
+    padding: 14px 0;
+  }
+
+  .mkt-logo {
+    font-size: 13px;
+    gap: 8px;
+  }
+
+  .mkt-logo-mark {
+    width: 30px;
+    height: 30px;
+  }
+
+  .mkt-header-actions {
+    gap: 8px;
+  }
+
+  .mkt-header-actions .mkt-btn {
+    padding: 8px 12px;
+    font-size: 13px;
   }
 
   .mkt-header-actions .mkt-btn-ghost {
-    display: none;
+    display: inline-flex;
   }
 
   .mkt-hero {
-    width: calc(100% - 24px);
+    width: calc(100% - 20px);
+    padding-bottom: 28px;
+  }
+
+  .mkt-hero h1 {
+    font-size: clamp(28px, 9vw, 36px);
+  }
+
+  .mkt-hero-ctas .mkt-btn-lg {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .mkt-stage {
+    min-height: 360px;
+    max-width: 100%;
   }
 
   .mkt-phone {
-    width: 180px;
-    height: 320px;
-    left: 8%;
+    width: 168px;
+    height: 300px;
+    left: 6%;
   }
 
   .mkt-analysis {
-    width: 170px;
+    width: min(170px, 46vw);
+    right: 0;
   }
 
   .mkt-version {
-    width: 190px;
+    width: min(190px, 52vw);
   }
 
-  .mkt-proof {
-    width: calc(100% - 24px);
+  .mkt-scribble.a,
+  .mkt-scribble.b {
+    font-size: 18px;
+  }
+
+  .mkt-platforms {
+    width: calc(100% - 20px);
+    font-size: 12px;
   }
 
   .mkt-auth-card {
-    padding: 28px 20px 22px;
+    padding: 26px 18px 20px;
+  }
+
+  .mkt-auth-card h1 {
+    font-size: 26px;
+  }
+
+  .mkt-social {
+    grid-template-columns: 1fr;
   }
 }
