@@ -127,6 +127,34 @@ const copiedSection = ref('')
 const speechPolling = ref(false)
 const analysisRevealKey = ref(0)
 
+const FLASH_MS = 4500
+const flashTimers = {}
+
+function clearFlash(key) {
+  if (flashTimers[key]) {
+    clearTimeout(flashTimers[key])
+    delete flashTimers[key]
+  }
+}
+
+function setFlash(targetRef, key, text, ms = FLASH_MS) {
+  clearFlash(key)
+  targetRef.value = text || ''
+  if (!text) return
+  flashTimers[key] = setTimeout(() => {
+    if (targetRef.value === text) targetRef.value = ''
+    delete flashTimers[key]
+  }, ms)
+}
+
+function clearEphemeralMessages() {
+  ;['competitor', 'plan', 'saveError', 'remix'].forEach(clearFlash)
+  competitorMessage.value = ''
+  planMessage.value = ''
+  saveError.value = ''
+  remixMessage.value = ''
+}
+
 let speechPollTimer = null
 let copiedTimer = null
 let chromeIdleTimer = null
@@ -397,7 +425,7 @@ async function toggleVideoPlayback() {
     if (!selectedReel.value?.video_url) {
       const ok = await refreshPlaybackUrl()
       if (!ok) {
-        saveError.value = 'Видео пока недоступно — попробуйте чуть позже'
+        setFlash(saveError, 'saveError', 'Видео пока недоступно — попробуйте чуть позже')
         return
       }
       await new Promise((r) => setTimeout(r, 50))
@@ -411,7 +439,7 @@ async function toggleVideoPlayback() {
       } catch {
         const ok = await refreshPlaybackUrl()
         if (!ok) {
-          saveError.value = 'Не удалось воспроизвести видео'
+          setFlash(saveError, 'saveError', 'Не удалось воспроизвести видео')
           return
         }
         await new Promise((r) => setTimeout(r, 80))
@@ -419,7 +447,7 @@ async function toggleVideoPlayback() {
         if (retry) {
           applyVideoAudio()
           await retry.play().catch(() => {
-            saveError.value = 'Не удалось воспроизвести видео'
+            setFlash(saveError, 'saveError', 'Не удалось воспроизвести видео')
           })
         }
       }
@@ -516,6 +544,7 @@ function navigate(page, id = null) {
     }
     return
   }
+  const pageChanged = currentPage.value !== page
   currentPage.value = page
   let nextHash = page
   if (page === 'detail' && id) nextHash = `detail/${id}`
@@ -523,6 +552,7 @@ function navigate(page, id = null) {
   if (window.location.hash.replace(/^#/, '') !== nextHash) {
     window.location.hash = nextHash
   }
+  if (pageChanged) clearEphemeralMessages()
   if (marketingPages.includes(page)) {
     stopSpeechPolling()
     resetVideoUi()
@@ -538,7 +568,6 @@ function navigate(page, id = null) {
     editingSection.value = null
     selectedCompetitorId.value = null
     remixMode.value = false
-    remixMessage.value = ''
     void loadHomeReels()
   }
   if (page === 'plan') {
@@ -623,7 +652,7 @@ async function copySection(section) {
       if (copiedSection.value === section) copiedSection.value = ''
     }, 1600)
   } catch {
-    saveError.value = 'Не удалось скопировать текст'
+    setFlash(saveError, 'saveError', 'Не удалось скопировать текст')
   }
 }
 
@@ -635,7 +664,7 @@ async function loadHomeReels() {
     if (!response.ok) throw new Error('Не удалось загрузить рилсы')
     homeReels.value = await response.json()
   } catch (error) {
-    saveError.value = error.message
+    setFlash(saveError, 'saveError', error.message)
   } finally {
     homeLoading.value = false
   }
@@ -644,10 +673,12 @@ async function loadHomeReels() {
 async function openReel(reelId, { syncHash = true, remix = false } = {}) {
   if (!reelId) return
   detailLoading.value = true
+  clearFlash('saveError')
   saveError.value = ''
   editingSection.value = null
   copiedSection.value = ''
   remixMode.value = remix
+  clearFlash('remix')
   remixMessage.value = ''
   resetVideoUi()
   stopSpeechPolling()
@@ -672,7 +703,7 @@ async function openReel(reelId, { syncHash = true, remix = false } = {}) {
       void refreshPlaybackUrl()
     }
   } catch (error) {
-    saveError.value = error.message
+    setFlash(saveError, 'saveError', error.message)
     selectedReel.value = null
   } finally {
     detailLoading.value = false
@@ -685,7 +716,9 @@ async function startRemix(reelId) {
   if (!selectedReel.value || selectedReel.value.id !== reelId) return
 
   remixLoading.value = true
+  clearFlash('remix')
   remixMessage.value = 'Готовим русский сценарий: перевод и разбивка на хук / скрипт / CTA…'
+  clearFlash('saveError')
   saveError.value = ''
   // Clear stale RU fields so the UI doesn't flash old translation → new one.
   selectedReel.value = {
@@ -705,11 +738,16 @@ async function startRemix(reelId) {
     }
     selectedReel.value = body
     analysisRevealKey.value += 1
-    remixMessage.value =
-      'Перевод готов. Сверьте с оригиналом, поправьте текст и утвердите в контент-план.'
+    setFlash(
+      remixMessage,
+      'remix',
+      'Перевод готов. Сверьте с оригиналом, поправьте текст и утвердите в контент-план.',
+      8000,
+    )
     stopSpeechPolling()
   } catch (error) {
-    saveError.value = error.message
+    setFlash(saveError, 'saveError', error.message)
+    clearFlash('remix')
     remixMessage.value = ''
   } finally {
     remixLoading.value = false
@@ -724,7 +762,7 @@ async function approveRemixToPlan() {
   }
   const entry = await addToContentPlan(selectedReel.value.id)
   if (entry) {
-    remixMessage.value = 'Сценарий утверждён и добавлен в контент-план'
+    setFlash(remixMessage, 'remix', 'Сценарий утверждён и добавлен в контент-план')
     navigate('plan')
   }
 }
@@ -738,7 +776,9 @@ async function loadInitialCompetitor() {
 
 async function loadCompetitor(forceRefresh = false) {
   competitorLoading.value = true
+  clearFlash('competitor')
   competitorMessage.value = 'Загружаем профиль и рилсы…'
+  clearFlash('saveError')
   saveError.value = ''
 
   try {
@@ -759,14 +799,15 @@ async function loadCompetitor(forceRefresh = false) {
     }
 
     competitorHandle.value = ''
-    competitorMessage.value = 'Конкурент загружен. Можно посмотреть рилсы.'
+    setFlash(competitorMessage, 'competitor', 'Конкурент загружен. Можно посмотреть рилсы.')
     await loadCompetitorsList()
     // Stay on the list — user opens reels via «Открыть».
     selectedCompetitorId.value = null
     competitor.value = null
     competitorReels.value = []
   } catch (error) {
-    saveError.value = error.message
+    setFlash(saveError, 'saveError', error.message)
+    clearFlash('competitor')
     competitorMessage.value = ''
   } finally {
     competitorLoading.value = false
@@ -778,12 +819,14 @@ function startEditing(section) {
   editingSection.value = section
   draft.value = selectedReel.value[section] || ''
   saveState.value = 'idle'
+  clearFlash('saveError')
   saveError.value = ''
 }
 
 function cancelEditing() {
   editingSection.value = null
   draft.value = ''
+  clearFlash('saveError')
   saveError.value = ''
 }
 
@@ -791,6 +834,7 @@ async function saveSection(section) {
   if (!selectedReel.value || saveState.value === 'saving') return
 
   saveState.value = 'saving'
+  clearFlash('saveError')
   saveError.value = ''
 
   try {
@@ -820,7 +864,7 @@ async function saveSection(section) {
     }, 2200)
   } catch (error) {
     saveState.value = 'error'
-    saveError.value = error.message
+    setFlash(saveError, 'saveError', error.message)
   }
 }
 
@@ -833,6 +877,7 @@ function syncPageFromHash() {
     }
     return
   }
+  if (currentPage.value !== page) clearEphemeralMessages()
   currentPage.value = page
   if (marketingPages.includes(page)) {
     stopSpeechPolling()
@@ -887,6 +932,7 @@ async function openCompetitor(competitorId, { syncHash = true } = {}) {
   if (!competitorId) return
   competitorOpening.value = true
   competitorAvatarBroken.value = false
+  clearFlash('saveError')
   saveError.value = ''
   selectedCompetitorId.value = competitorId
   if (syncHash) navigate('competitors', competitorId)
@@ -900,9 +946,13 @@ async function openCompetitor(competitorId, { syncHash = true } = {}) {
     if (!profileResponse.ok) throw new Error('Не удалось открыть конкурента')
     competitor.value = await profileResponse.json()
     competitorReels.value = reelsResponse.ok ? await reelsResponse.json() : []
-    competitorMessage.value = `Показаны ${competitorReels.value.length} рилсов`
+    setFlash(
+      competitorMessage,
+      'competitor',
+      `Показаны ${competitorReels.value.length} рилсов`,
+    )
   } catch (error) {
-    saveError.value = error.message
+    setFlash(saveError, 'saveError', error.message)
     competitor.value = null
     competitorReels.value = []
   } finally {
@@ -929,7 +979,7 @@ async function loadContentPlan() {
     if (!response.ok) throw new Error('Не удалось загрузить контент-план')
     planItems.value = await response.json()
   } catch (error) {
-    saveError.value = error.message
+    setFlash(saveError, 'saveError', error.message)
   } finally {
     planLoading.value = false
   }
@@ -949,7 +999,9 @@ function togglePlanExpanded(itemId) {
 async function removeFromContentPlan(item) {
   if (!item?.id || planBusyItemId.value === item.id) return
   planBusyItemId.value = item.id
+  clearFlash('plan')
   planMessage.value = ''
+  clearFlash('saveError')
   saveError.value = ''
   try {
     const response = await fetch(`/api/content-plan/${item.id}`, { method: 'DELETE' })
@@ -962,9 +1014,9 @@ async function removeFromContentPlan(item) {
     delete nextExpanded[item.id]
     expandedPlanIds.value = nextExpanded
     syncReelPlanFields(item.reel_id, null)
-    planMessage.value = 'Удалено из контент-плана'
+    setFlash(planMessage, 'plan', 'Удалено из контент-плана')
   } catch (error) {
-    saveError.value = error.message
+    setFlash(saveError, 'saveError', error.message)
   } finally {
     planBusyItemId.value = null
   }
@@ -974,11 +1026,13 @@ async function addToContentPlan(reelId) {
   if (!reelId || planBusyReelId.value === reelId) return
   const existing = planEntryForReel(reelId)
   if (existing) {
-    planMessage.value = 'Уже в контент-плане'
+    setFlash(planMessage, 'plan', 'Уже в контент-плане')
     return existing
   }
   planBusyReelId.value = reelId
+  clearFlash('plan')
   planMessage.value = ''
+  clearFlash('saveError')
   saveError.value = ''
   try {
     const response = await fetch('/api/content-plan', {
@@ -995,10 +1049,10 @@ async function addToContentPlan(reelId) {
     }
     planItems.value = [body, ...planItems.value.filter((item) => item.id !== body.id)]
     syncReelPlanFields(reelId, body)
-    planMessage.value = 'Добавлено в контент-план'
+    setFlash(planMessage, 'plan', 'Добавлено в контент-план')
     return body
   } catch (error) {
-    saveError.value = error.message
+    setFlash(saveError, 'saveError', error.message)
     return null
   } finally {
     planBusyReelId.value = null
@@ -1030,7 +1084,7 @@ async function setShootStatus(itemId, shootStatus) {
     syncReelPlanFields(body.reel_id, body)
   } catch (error) {
     if (current) current.shoot_status = previous
-    saveError.value = error.message
+    setFlash(saveError, 'saveError', error.message)
   }
 }
 
@@ -1137,6 +1191,7 @@ onBeforeUnmount(() => {
   stopSpeechPolling()
   if (copiedTimer) window.clearTimeout(copiedTimer)
   clearChromeIdleTimer()
+  clearEphemeralMessages()
 })
 </script>
 
