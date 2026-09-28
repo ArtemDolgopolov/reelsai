@@ -626,54 +626,52 @@ img {
 .plan-status-group {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  padding: 3px;
+  background: #f4f2f7;
+  border: 1px solid #ebe7f0;
+  border-radius: 999px;
 }
 
 .plan-status-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   margin: 0;
   padding: 0;
-  font-size: 15px;
-  line-height: 1;
-  color: inherit;
-  background: #f3f4f6;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  box-shadow: 0 1px 2px rgb(15 23 42 / 6%);
+  color: #8b8496;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
   cursor: pointer;
   transition:
+    color 160ms ease,
     background-color 160ms ease,
-    border-color 160ms ease,
-    box-shadow 160ms ease,
-    transform 160ms ease;
+    box-shadow 160ms ease;
 }
 
 .plan-status-btn:hover {
-  background: #eef0f3;
+  color: #4b4458;
+  background: rgb(255 255 255 / 70%);
 }
 
 .plan-status-btn.active {
-  transform: translateY(-1px);
-  box-shadow: 0 3px 8px rgb(15 23 42 / 12%);
+  color: white;
+  box-shadow: 0 4px 10px rgb(50 31 88 / 14%);
 }
 
 .plan-status-btn.todo.active {
-  background: #fef2f2;
-  border-color: #fecaca;
+  background: linear-gradient(145deg, #f87171, #dc2626);
 }
 
 .plan-status-btn.ready.active {
-  background: #fffbeb;
-  border-color: #fde68a;
+  background: linear-gradient(145deg, #fbbf24, #d97706);
 }
 
 .plan-status-btn.done.active {
-  background: #ecfdf3;
-  border-color: #bbf7d0;
+  background: linear-gradient(145deg, #34d399, #059669);
 }
 
 .plan-card-controls .shoot-status-group {
@@ -686,6 +684,11 @@ img {
 
 .plan-remove-button:hover {
   background: #fef2f2;
+}
+
+.status-chip.readonly {
+  cursor: default;
+  pointer-events: none;
 }
 
 .plan-card-toolbar {

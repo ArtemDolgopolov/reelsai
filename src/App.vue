@@ -5,7 +5,9 @@ import {
   ArrowUpRight,
   Camera,
   Check,
+  CircleCheck,
   CircleHelp,
+  CircleX,
   ClipboardList,
   Clapperboard,
   ChevronDown,
@@ -27,6 +29,7 @@ import {
   Search,
   Sparkles,
   Target,
+  Timer,
   Trash2,
   Users,
   WandSparkles,
@@ -696,21 +699,6 @@ async function setShootStatusForReel(reelId, shootStatus) {
   await setShootStatus(entry.id, shootStatus)
 }
 
-async function cycleShootStatus(reel) {
-  const order = ['todo', 'ready', 'done']
-  let entry = planEntryForReel(reel.id)
-  if (!entry && reel.plan_item_id) {
-    entry = { id: reel.plan_item_id, shoot_status: reel.shoot_status, reel_id: reel.id }
-  }
-  if (!entry?.id) {
-    await addToContentPlan(reel.id)
-    return
-  }
-  const idx = order.indexOf(entry.shoot_status || 'todo')
-  const next = order[(idx + 1) % order.length]
-  await setShootStatus(entry.id, next)
-}
-
 onMounted(async () => {
   window.addEventListener('hashchange', syncPageFromHash)
   void loadContentPlan()
@@ -841,19 +829,23 @@ onBeforeUnmount(() => {
               >
                 + В план
               </button>
-              <button
+              <span
                 v-else
-                class="status-chip"
+                class="status-chip readonly"
                 :class="(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status || 'todo')"
-                type="button"
-                :title="'Сменить статус'"
-                @click="cycleShootStatus(reel)"
+                :title="shootStatusLabel(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status)"
               >
-                <X v-if="(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) === 'todo'" :size="13" />
-                <Hourglass v-else-if="(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) === 'ready'" :size="13" />
-                <Check v-else :size="13" />
+                <CircleX
+                  v-if="(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) === 'todo'"
+                  :size="13"
+                />
+                <Timer
+                  v-else-if="(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) === 'ready'"
+                  :size="13"
+                />
+                <CircleCheck v-else :size="13" />
                 {{ shootStatusLabel(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) }}
-              </button>
+              </span>
             </div>
           </article>
         </div>
@@ -900,7 +892,9 @@ onBeforeUnmount(() => {
                 <strong>{{ item.title }}</strong>
                 <span>{{ item.author }}<template v-if="formatPostedAt(item.posted_at)"> · {{ formatPostedAt(item.posted_at) }}</template></span>
                 <div class="status-chip compact" :class="item.shoot_status">
-                  <span aria-hidden="true">{{ item.shoot_status === 'done' ? '✅' : item.shoot_status === 'ready' ? '⏳' : '❌' }}</span>
+                  <CircleX v-if="item.shoot_status === 'todo'" :size="12" />
+                  <Timer v-else-if="item.shoot_status === 'ready'" :size="12" />
+                  <CircleCheck v-else :size="12" />
                   {{ shootStatusLabel(item.shoot_status) }}
                 </div>
               </div>
@@ -914,7 +908,7 @@ onBeforeUnmount(() => {
                     aria-label="Не взят в работу"
                     @click="setShootStatus(item.id, 'todo')"
                   >
-                    ❌
+                    <CircleX :size="15" :stroke-width="2.25" />
                   </button>
                   <button
                     type="button"
@@ -924,7 +918,7 @@ onBeforeUnmount(() => {
                     aria-label="Ждёт съёмки"
                     @click="setShootStatus(item.id, 'ready')"
                   >
-                    ⏳
+                    <Timer :size="15" :stroke-width="2.25" />
                   </button>
                   <button
                     type="button"
@@ -934,7 +928,7 @@ onBeforeUnmount(() => {
                     aria-label="Снят и выложен"
                     @click="setShootStatus(item.id, 'done')"
                   >
-                    ✅
+                    <CircleCheck :size="15" :stroke-width="2.25" />
                   </button>
                 </div>
                 <button
