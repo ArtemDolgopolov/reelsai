@@ -1,16 +1,15 @@
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 
 from app.config import get_settings
 from app.db import get_session
-from app.models import Competitor, Reel
+from app.models import Competitor, ContentPlanItem, Reel
 from app.schemas import ReelDetail, ReelListItem, ReelUpdateRequest
-from app.services.discovery import fetch_home_discover_reels
 from app.services.instagram_free import looks_like_real_transcript
 from app.services.overview import schedule_analysis
-from app.services.serializers import reel_to_detail
+from app.services.serializers import reel_to_detail, reel_to_list_item
 from app.services.stt_jobs import schedule_transcripts
 
 router = APIRouter(prefix="/reels", tags=["reels"])
@@ -35,14 +34,35 @@ def require_editor(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Editing is not allowed from this IP address")
 
 
+def _plan_map(session: Session, reel_ids: list[UUID]) -> dict[UUID, ContentPlanItem]:
+    if not reel_ids:
+        return {}
+    rows = session.exec(
+        select(ContentPlanItem).where(col(ContentPlanItem.reel_id).in_(reel_ids))
+    ).all()
+    return {item.reel_id: item for item in rows}
+
+
 @router.get("", response_model=list[ReelListItem])
 def list_reels(
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=40, ge=1, le=100),
     q: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> list[ReelListItem]:
-    """Home feed: absolute-random public Instagram reels (live discovery)."""
-    items = fetch_home_discover_reels(session, limit=limit)
+    """Home feed: reels from saved (tracked) competitors only — no random discovery."""
+    rows = session.exec(
+        select(Reel, Competitor)
+        .where(Reel.competitor_id == Competitor.id)
+        .where(Competitor.tracked.is_(True))
+        .order_by(col(Reel.views_count).desc(), col(Reel.posted_at).desc().nulls_last())
+        .limit(limit)
+    ).all()
+
+    plans = _plan_map(session, [reel.id for reel, _ in rows])
+    items = [
+        reel_to_list_item(reel, competitor.username, plan_item=plans.get(reel.id))
+        for reel, competitor in rows
+    ]
 
     query = (q or "").strip().lower()
     if not query:
@@ -85,24 +105,22 @@ def update_reel(
     session: Session = Depends(get_session),
 ) -> ReelDetail:
     require_editor(request)
-
     reel = session.get(Reel, reel_id)
     if reel is None:
         raise HTTPException(status_code=404, detail="Reel not found")
-
-    value = payload.value.strip()
-    limit = SECTION_LIMITS[payload.section]
-    if not value:
-        raise HTTPException(status_code=400, detail="Text cannot be empty")
-    if len(value) > limit:
-        raise HTTPException(status_code=400, detail=f"Text exceeds the {limit} character limit")
-
-    setattr(reel, payload.section, value)
-    session.add(reel)
-    session.commit()
-    session.refresh(reel)
-
     competitor = session.get(Competitor, reel.competitor_id)
     if competitor is None:
         raise HTTPException(status_code=404, detail="Competitor not found")
+
+    limit = SECTION_LIMITS[payload.section]
+    value = payload.value.strip()[:limit]
+    if payload.section == "hook":
+        reel.hook = value
+    elif payload.section == "script":
+        reel.script = value
+    else:
+        reel.cta = value
+    session.add(reel)
+    session.commit()
+    session.refresh(reel)
     return reel_to_detail(reel, competitor, session=session)

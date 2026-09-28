@@ -2,7 +2,7 @@ from datetime import datetime
 
 from sqlmodel import Session
 
-from app.models import Competitor, Reel
+from app.models import Competitor, ContentPlanItem, Reel
 from app.schemas import CompetitorRead, ReelDetail, ReelListItem
 from app.services.instagram_free import looks_like_real_transcript
 from app.services.overview import _is_ai_overview, enrich_reel_analysis
@@ -29,7 +29,12 @@ def competitor_to_read(competitor: Competitor, *, reels_count: int = 0) -> Compe
     return payload.model_copy(update={"reels_count": reels_count})
 
 
-def reel_to_list_item(reel: Reel, username: str) -> ReelListItem:
+def reel_to_list_item(
+    reel: Reel,
+    username: str,
+    *,
+    plan_item: ContentPlanItem | None = None,
+) -> ReelListItem:
     transcript = (reel.transcript or "").strip()
     return ReelListItem(
         id=reel.id,
@@ -45,6 +50,10 @@ def reel_to_list_item(reel: Reel, username: str) -> ReelListItem:
         comments_count=reel.comments_count,
         has_transcript=looks_like_real_transcript(transcript),
         status=reel.status,
+        posted_at=reel.posted_at,
+        in_plan=plan_item is not None,
+        plan_item_id=plan_item.id if plan_item else None,
+        shoot_status=plan_item.shoot_status if plan_item else None,
     )
 
 

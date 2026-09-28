@@ -146,13 +146,48 @@ const filteredReels = computed(() => {
   )
 })
 
-const planReelIds = computed(() => new Set(planItems.value.map((item) => item.reel_id)))
-
 const selectedDurationLabel = computed(() => selectedReel.value?.duration || '0:00')
 const selectedViewsLabel = computed(() => formatViews(selectedReel.value?.views_count || 0))
 const selectedInPlan = computed(() =>
-  selectedReel.value ? planReelIds.value.has(selectedReel.value.id) : false,
+  selectedReel.value ? Boolean(planEntryForReel(selectedReel.value.id) || selectedReel.value.in_plan) : false,
 )
+
+function planEntryForReel(reelId) {
+  if (!reelId) return null
+  return planItems.value.find((item) => item.reel_id === reelId) || null
+}
+
+function shootStatusLabel(status) {
+  if (status === 'done') return 'Снят и выложен'
+  if (status === 'ready') return 'Ждёт съёмки'
+  return 'Не взят в работу'
+}
+
+function formatPostedAt(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const day = String(date.getDate()).padStart(2, '0')
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const year = date.getFullYear()
+  return `${day}.${month}.${year}`
+}
+
+function syncReelPlanFields(reelId, entry) {
+  const patch = (list) =>
+    list.map((reel) =>
+      reel.id === reelId
+        ? {
+            ...reel,
+            in_plan: Boolean(entry),
+            plan_item_id: entry?.id || null,
+            shoot_status: entry?.shoot_status || null,
+          }
+        : reel,
+    )
+  homeReels.value = patch(homeReels.value)
+  competitorReels.value = patch(competitorReels.value)
+}
 
 function formatViews(count) {
   if (count >= 1_000_000) {
@@ -309,7 +344,7 @@ async function loadHomeReels() {
   const hadItems = homeReels.value.length > 0
   if (!hadItems) homeLoading.value = true
   try {
-    const response = await fetch('/api/reels?limit=20', { cache: 'no-store' })
+    const response = await fetch('/api/reels?limit=40', { cache: 'no-store' })
     if (!response.ok) throw new Error('Не удалось загрузить рилсы')
     homeReels.value = await response.json()
   } catch (error) {
@@ -545,10 +580,10 @@ async function loadContentPlan() {
 
 async function addToContentPlan(reelId) {
   if (!reelId || planBusyReelId.value === reelId) return
-  if (planReelIds.value.has(reelId)) {
+  const existing = planEntryForReel(reelId)
+  if (existing) {
     planMessage.value = 'Уже в контент-плане'
-    navigate('plan')
-    return
+    return existing
   }
   planBusyReelId.value = reelId
   planMessage.value = ''
@@ -561,12 +596,18 @@ async function addToContentPlan(reelId) {
     })
     const body = await response.json()
     if (!response.ok) {
-      throw new Error(body.detail || 'Не удалось добавить в контент-план')
+      const detail = Array.isArray(body.detail)
+        ? body.detail.map((item) => item.msg || item).join('; ')
+        : body.detail
+      throw new Error(detail || 'Не удалось добавить в контент-план')
     }
     planItems.value = [body, ...planItems.value.filter((item) => item.id !== body.id)]
+    syncReelPlanFields(reelId, body)
     planMessage.value = 'Добавлено в контент-план'
+    return body
   } catch (error) {
     saveError.value = error.message
+    return null
   } finally {
     planBusyReelId.value = null
   }
@@ -574,9 +615,11 @@ async function addToContentPlan(reelId) {
 
 async function setShootStatus(itemId, shootStatus) {
   const current = planItems.value.find((item) => item.id === itemId)
-  if (!current || current.shoot_status === shootStatus) return
-  const previous = current.shoot_status
-  current.shoot_status = shootStatus
+  const previous = current?.shoot_status
+  if (current) {
+    if (current.shoot_status === shootStatus) return
+    current.shoot_status = shootStatus
+  }
   try {
     const response = await fetch(`/api/content-plan/${itemId}`, {
       method: 'PATCH',
@@ -587,11 +630,45 @@ async function setShootStatus(itemId, shootStatus) {
     if (!response.ok) {
       throw new Error(body.detail || 'Не удалось обновить статус')
     }
-    planItems.value = planItems.value.map((item) => (item.id === itemId ? body : item))
+    if (planItems.value.some((item) => item.id === itemId)) {
+      planItems.value = planItems.value.map((item) => (item.id === itemId ? body : item))
+    } else {
+      planItems.value = [body, ...planItems.value]
+    }
+    syncReelPlanFields(body.reel_id, body)
   } catch (error) {
-    current.shoot_status = previous
+    if (current) current.shoot_status = previous
     saveError.value = error.message
   }
+}
+
+async function setShootStatusForReel(reelId, shootStatus) {
+  let entry = planEntryForReel(reelId)
+  if (!entry) {
+    const reel = [...homeReels.value, ...competitorReels.value].find((item) => item.id === reelId)
+    if (reel?.plan_item_id) {
+      entry = { id: reel.plan_item_id, shoot_status: reel.shoot_status, reel_id: reelId }
+    } else {
+      entry = await addToContentPlan(reelId)
+    }
+  }
+  if (!entry) return
+  await setShootStatus(entry.id, shootStatus)
+}
+
+async function cycleShootStatus(reel) {
+  const order = ['todo', 'ready', 'done']
+  let entry = planEntryForReel(reel.id)
+  if (!entry && reel.plan_item_id) {
+    entry = { id: reel.plan_item_id, shoot_status: reel.shoot_status, reel_id: reel.id }
+  }
+  if (!entry?.id) {
+    await addToContentPlan(reel.id)
+    return
+  }
+  const idx = order.indexOf(entry.shoot_status || 'todo')
+  const next = order[(idx + 1) % order.length]
+  await setShootStatus(entry.id, next)
 }
 
 onMounted(async () => {
@@ -660,16 +737,16 @@ onBeforeUnmount(() => {
       <section v-if="currentPage === 'home'" class="page home-page">
         <header class="page-header home-header">
           <div>
-            <span class="eyebrow">Вдохновение на каждый день</span>
+            <span class="eyebrow">Рилсы ваших конкурентов</span>
             <h1>Главное</h1>
-            <p>20 случайных рилсов прямо из Instagram — не только из ваших конкурентов.</p>
+            <p>Лента рилсов из сохранённых конкурентов — без случайных аккаунтов.</p>
           </div>
           <label class="search-field">
             <Search :size="17" />
             <input
               v-model="searchQuery"
               type="search"
-              placeholder="Поиск по автору, теме..."
+              placeholder="Поиск по хукам, темам, авторам..."
             />
             <kbd>⌘ K</kbd>
           </label>
@@ -678,14 +755,14 @@ onBeforeUnmount(() => {
         <div class="section-heading">
           <div>
             <span class="live-dot"></span>
-            <strong>Самые просматриваемые</strong>
+            <strong>Из конкурентов</strong>
           </div>
           <span>{{ homeLoading ? 'Загрузка...' : `Найдено ${filteredReels.length}` }}</span>
         </div>
 
-        <div v-if="filteredReels.length" class="reels-grid">
-          <article v-for="reel in filteredReels" :key="reel.id" class="reel-card">
-            <button class="poster" type="button" @click="openReel(reel.id)">
+        <div v-if="filteredReels.length" class="home-feed">
+          <article v-for="reel in filteredReels" :key="reel.id" class="home-feed-row">
+            <button class="home-feed-thumb" type="button" @click="openReel(reel.id)">
               <img
                 v-if="reel.thumbnail_url"
                 :src="thumbSrc(reel.thumbnail_url)"
@@ -694,104 +771,97 @@ onBeforeUnmount(() => {
                 referrerpolicy="no-referrer"
                 @error="onThumbError"
               />
-              <span class="poster-shade"></span>
-              <span class="poster-hook">{{ posterLine(reel) }}</span>
-              <span class="duration"><Play :size="10" fill="currentColor" /> {{ reel.duration }}</span>
+              <span class="duration"><Play :size="9" fill="currentColor" /> {{ reel.duration }}</span>
             </button>
-            <div class="reel-meta">
-              <span class="mini-avatar">{{ reel.author.slice(1, 2).toUpperCase() }}</span>
-              <span>{{ reel.author }}</span>
-              <a
-                v-if="reel.instagram_url"
-                class="open-original-link"
-                :href="reel.instagram_url"
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Открыть оригинальный Reels"
-                @click.stop
-              >
-                <ExternalLink :size="14" />
-              </a>
+            <div class="home-feed-body">
+              <button class="home-feed-title" type="button" @click="openReel(reel.id)">
+                {{ reel.title }}
+              </button>
+              <div class="home-feed-tags">
+                <span>Instagram</span>
+                <span>Reels</span>
+              </div>
+              <div class="home-feed-meta">
+                <span><Eye :size="12" /> {{ formatViews(reel.views_count) }}</span>
+                <span><Heart :size="12" /> {{ formatViews(reel.likes_count) }}</span>
+                <span>{{ reel.author }}</span>
+                <span v-if="formatPostedAt(reel.posted_at)">{{ formatPostedAt(reel.posted_at) }}</span>
+              </div>
+            </div>
+            <div class="home-feed-actions">
+              <button class="ghost-button remix-chip" type="button" @click="openReel(reel.id)">
+                Remix
+              </button>
               <button
+                v-if="!(reel.in_plan || planEntryForReel(reel.id))"
+                class="ghost-button plan-chip"
                 type="button"
-                class="plan-add-button"
-                :class="{ added: planReelIds.has(reel.id) }"
                 :disabled="planBusyReelId === reel.id"
-                :aria-label="planReelIds.has(reel.id) ? 'Уже в контент-плане' : 'Взять на съёмку'"
-                :title="planReelIds.has(reel.id) ? 'Уже в контент-плане' : 'Взять на съёмку'"
-                @click.stop="addToContentPlan(reel.id)"
+                @click="addToContentPlan(reel.id)"
               >
-                <Check v-if="planReelIds.has(reel.id)" :size="15" />
-                <Clapperboard v-else :size="15" />
+                + В план
+              </button>
+              <button
+                v-else
+                class="status-chip"
+                :class="(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status || 'todo')"
+                type="button"
+                :title="'Сменить статус'"
+                @click="cycleShootStatus(reel)"
+              >
+                <X v-if="(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) === 'todo'" :size="13" />
+                <Hourglass v-else-if="(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) === 'ready'" :size="13" />
+                <Check v-else :size="13" />
+                {{ shootStatusLabel(planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) }}
               </button>
             </div>
-            <h2>{{ reel.title }}</h2>
-            <div class="stats-pills">
-              <span class="stat-pill views"><Eye :size="14" /> {{ formatViews(reel.views_count) }}</span>
-              <span class="stat-pill likes"><Heart :size="14" /> {{ formatViews(reel.likes_count) }}</span>
-              <span class="stat-pill comments"><MessageCircle :size="14" /> {{ formatViews(reel.comments_count) }}</span>
-            </div>
-            <button class="remix-button" type="button" @click="openReel(reel.id)">
-              <WandSparkles :size="15" />
-              Remix
-            </button>
           </article>
         </div>
 
         <div v-else class="empty-state">
-          <Search :size="30" />
-          <strong>{{ homeLoading ? 'Загружаем рилсы...' : 'Ничего не найдено' }}</strong>
-          <span>Попробуйте изменить запрос или загрузить конкурента</span>
+          <Users :size="30" />
+          <strong>{{ homeLoading ? 'Загружаем рилсы...' : 'Пока нет рилсов конкурентов' }}</strong>
+          <span>Добавьте конкурента и загрузите его рилсы — они появятся здесь</span>
         </div>
       </section>
 
       <section v-else-if="currentPage === 'plan'" class="page plan-page">
         <header class="page-header">
           <div>
-            <span class="eyebrow">Очередь на съёмку</span>
             <h1>Контент план</h1>
-            <p>Рилсы, которые вы взяли на съёмку. Меняйте статус: не готово → ждёт съёмки → снято.</p>
+            <p>Русские сценарии, которые берём в работу и доводим до съёмки</p>
           </div>
         </header>
-
-        <div class="section-heading">
-          <div>
-            <span class="live-dot"></span>
-            <strong>Ваша очередь</strong>
-          </div>
-          <span>{{ planLoading ? 'Загрузка...' : `${planItems.length} в плане` }}</span>
-        </div>
 
         <div v-if="planMessage" class="competitor-feedback">
           <span class="success-badge"><Check :size="14" /> {{ planMessage }}</span>
         </div>
 
-        <div v-if="planItems.length" class="reels-grid">
-          <article v-for="item in planItems" :key="item.id" class="reel-card">
-            <button class="poster" type="button" @click="openReel(item.reel_id)">
-              <img
-                v-if="item.thumbnail_url"
-                :src="thumbSrc(item.thumbnail_url)"
-                :alt="item.title"
-                loading="lazy"
-                referrerpolicy="no-referrer"
-                @error="onThumbError"
-              />
-              <span class="poster-shade"></span>
-              <span class="poster-hook">{{ posterLine(item) }}</span>
-              <span class="duration"><Play :size="10" fill="currentColor" /> {{ item.duration }}</span>
-            </button>
-            <div class="reel-meta">
-              <span class="mini-avatar">{{ item.author.slice(1, 2).toUpperCase() }}</span>
-              <span>{{ item.author }}</span>
+        <div v-if="planItems.length" class="plan-cards">
+          <article v-for="item in planItems" :key="item.id" class="plan-card">
+            <div class="plan-card-top">
+              <button class="plan-card-thumb" type="button" @click="openReel(item.reel_id)">
+                <img
+                  v-if="item.thumbnail_url"
+                  :src="thumbSrc(item.thumbnail_url)"
+                  :alt="item.title"
+                  loading="lazy"
+                  referrerpolicy="no-referrer"
+                  @error="onThumbError"
+                />
+                <span class="duration"><Play :size="9" fill="currentColor" /> {{ item.duration }}</span>
+              </button>
+              <div class="plan-card-heading">
+                <strong>{{ item.title }}</strong>
+                <span>{{ item.author }}<template v-if="formatPostedAt(item.posted_at)"> · {{ formatPostedAt(item.posted_at) }}</template></span>
+              </div>
               <div class="shoot-status-group" role="group" aria-label="Статус съёмки">
                 <button
                   type="button"
                   class="shoot-status-button todo"
                   :class="{ active: item.shoot_status === 'todo' }"
-                  title="Ещё не готово"
-                  aria-label="Ещё не готово"
-                  @click.stop="setShootStatus(item.id, 'todo')"
+                  title="Не взят в работу"
+                  @click="setShootStatus(item.id, 'todo')"
                 >
                   <X :size="14" />
                 </button>
@@ -800,8 +870,7 @@ onBeforeUnmount(() => {
                   class="shoot-status-button ready"
                   :class="{ active: item.shoot_status === 'ready' }"
                   title="Ждёт съёмки"
-                  aria-label="Ждёт съёмки"
-                  @click.stop="setShootStatus(item.id, 'ready')"
+                  @click="setShootStatus(item.id, 'ready')"
                 >
                   <Hourglass :size="14" />
                 </button>
@@ -809,31 +878,56 @@ onBeforeUnmount(() => {
                   type="button"
                   class="shoot-status-button done"
                   :class="{ active: item.shoot_status === 'done' }"
-                  title="Снято и выложено"
-                  aria-label="Снято и выложено"
-                  @click.stop="setShootStatus(item.id, 'done')"
+                  title="Снят и выложен"
+                  @click="setShootStatus(item.id, 'done')"
                 >
                   <Check :size="14" />
                 </button>
               </div>
             </div>
-            <h2>{{ item.title }}</h2>
-            <div class="stats-pills">
-              <span class="stat-pill views"><Eye :size="14" /> {{ formatViews(item.views_count) }}</span>
-              <span class="stat-pill likes"><Heart :size="14" /> {{ formatViews(item.likes_count) }}</span>
-              <span class="stat-pill comments"><MessageCircle :size="14" /> {{ formatViews(item.comments_count) }}</span>
+
+            <div class="status-chip" :class="item.shoot_status">
+              <X v-if="item.shoot_status === 'todo'" :size="13" />
+              <Hourglass v-else-if="item.shoot_status === 'ready'" :size="13" />
+              <Check v-else :size="13" />
+              {{ shootStatusLabel(item.shoot_status) }}
             </div>
-            <button class="remix-button" type="button" @click="openReel(item.reel_id)">
-              <WandSparkles :size="15" />
-              Remix
-            </button>
+
+            <div class="plan-script-block">
+              <span>ХУК</span>
+              <p>{{ item.hook || 'Хук ещё не готов — откройте карточку рилса' }}</p>
+            </div>
+            <div class="plan-script-block">
+              <span>СКРИПТ</span>
+              <p>{{ item.script || 'Скрипт ещё не готов — откройте карточку рилса' }}</p>
+            </div>
+            <div class="plan-script-block">
+              <span>CALL TO ACTION</span>
+              <p>{{ item.cta || 'CTA ещё не готов' }}</p>
+            </div>
+
+            <div class="plan-card-footer">
+              <a
+                v-if="item.instagram_url"
+                class="open-original-chip"
+                :href="item.instagram_url"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <ArrowUpRight :size="12" />
+                Оригинальный Reels
+              </a>
+              <button class="ghost-button" type="button" @click="openReel(item.reel_id)">
+                Открыть карточку
+              </button>
+            </div>
           </article>
         </div>
 
         <div v-else class="empty-state">
           <Clapperboard :size="30" />
           <strong>{{ planLoading ? 'Загружаем план…' : 'Контент-план пуст' }}</strong>
-          <span>Добавьте рилс с главной или со страницы разбора кнопкой «На съёмку»</span>
+          <span>Добавьте рилс с главной или из конкурентов кнопкой «+ В план»</span>
         </div>
       </section>
 
@@ -995,16 +1089,51 @@ onBeforeUnmount(() => {
                   <span>{{ formatViews(reel.views_count) }} views</span>
                   <span>{{ formatViews(reel.likes_count) }} likes</span>
                 </div>
-                <a
-                  v-if="reel.instagram_url"
-                  class="open-original-chip"
-                  :href="reel.instagram_url"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <ExternalLink :size="12" />
-                  Оригинал
-                </a>
+                <div class="compact-plan-row">
+                  <div
+                    v-if="reel.in_plan || planEntryForReel(reel.id)"
+                    class="shoot-status-group"
+                    role="group"
+                    aria-label="Статус съёмки"
+                  >
+                    <button
+                      type="button"
+                      class="shoot-status-button todo"
+                      :class="{ active: (planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) === 'todo' }"
+                      title="Не взят в работу"
+                      @click.stop="setShootStatusForReel(reel.id, 'todo')"
+                    >
+                      <X :size="13" />
+                    </button>
+                    <button
+                      type="button"
+                      class="shoot-status-button ready"
+                      :class="{ active: (planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) === 'ready' }"
+                      title="Ждёт съёмки"
+                      @click.stop="setShootStatusForReel(reel.id, 'ready')"
+                    >
+                      <Hourglass :size="13" />
+                    </button>
+                    <button
+                      type="button"
+                      class="shoot-status-button done"
+                      :class="{ active: (planEntryForReel(reel.id)?.shoot_status || reel.shoot_status) === 'done' }"
+                      title="Снят и выложен"
+                      @click.stop="setShootStatusForReel(reel.id, 'done')"
+                    >
+                      <Check :size="13" />
+                    </button>
+                  </div>
+                  <button
+                    v-else
+                    class="ghost-button plan-chip compact-plan-chip"
+                    type="button"
+                    :disabled="planBusyReelId === reel.id"
+                    @click.stop="addToContentPlan(reel.id)"
+                  >
+                    + В план
+                  </button>
+                </div>
               </article>
             </div>
 
@@ -1052,11 +1181,11 @@ onBeforeUnmount(() => {
                 class="primary-button wide"
                 type="button"
                 :disabled="planBusyReelId === selectedReel.id"
-                @click="addToContentPlan(selectedReel.id)"
+                @click="selectedInPlan ? navigate('plan') : addToContentPlan(selectedReel.id)"
               >
                 <Check v-if="selectedInPlan" :size="17" />
                 <Clapperboard v-else :size="17" />
-                {{ selectedInPlan ? 'Уже в контент-плане' : 'Взять на съёмку' }}
+                {{ selectedInPlan ? 'Открыть в контент-плане' : '+ В план' }}
               </button>
               <a
                 v-if="selectedReel.instagram_url"

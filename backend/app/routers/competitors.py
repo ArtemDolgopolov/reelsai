@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session, col, select
 
 from app.db import engine, get_session
-from app.models import Competitor, CompetitorStatus, Reel, ReelStatus
+from app.models import Competitor, CompetitorStatus, ContentPlanItem, Reel, ReelStatus
 from app.schemas import CompetitorLoadRequest, CompetitorLoadResponse, CompetitorRead, ReelListItem
 from app.services.instagram_free import (
     FreeReelPayload,
@@ -221,7 +221,14 @@ def list_competitor_reels(
         raise HTTPException(status_code=404, detail="Competitor not found")
 
     reels = get_latest_reels(session, competitor_id)
-    return [reel_to_list_item(reel, competitor.username) for reel in reels]
+    plan_rows = session.exec(
+        select(ContentPlanItem).where(col(ContentPlanItem.reel_id).in_([reel.id for reel in reels]))
+    ).all() if reels else []
+    plans = {item.reel_id: item for item in plan_rows}
+    return [
+        reel_to_list_item(reel, competitor.username, plan_item=plans.get(reel.id))
+        for reel in reels
+    ]
 
 
 @router.post("/load", response_model=CompetitorLoadResponse)

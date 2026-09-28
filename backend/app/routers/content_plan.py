@@ -30,6 +30,10 @@ def _to_read(item: ContentPlanItem, reel: Reel, username: str) -> ContentPlanIte
         views_count=reel.views_count,
         likes_count=reel.likes_count,
         comments_count=reel.comments_count,
+        hook=reel.hook or "",
+        script=reel.script or "",
+        cta=reel.cta or "",
+        posted_at=reel.posted_at,
         created_at=item.created_at,
         updated_at=item.updated_at,
     )

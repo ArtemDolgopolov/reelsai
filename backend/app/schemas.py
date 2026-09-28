@@ -39,6 +39,10 @@ class ReelListItem(BaseModel):
     comments_count: int
     has_transcript: bool = False
     status: ReelStatus
+    posted_at: Optional[datetime] = None
+    in_plan: bool = False
+    plan_item_id: Optional[UUID] = None
+    shoot_status: Optional[ShootStatus] = None
 
 
 class ReelDetail(BaseModel):
@@ -116,5 +120,9 @@ class ContentPlanItemRead(BaseModel):
     views_count: int
     likes_count: int
     comments_count: int
+    hook: str = ""
+    script: str = ""
+    cta: str = ""
+    posted_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
