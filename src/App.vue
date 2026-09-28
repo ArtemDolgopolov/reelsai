@@ -8,6 +8,8 @@ import {
   CircleHelp,
   ClipboardList,
   Clapperboard,
+  ChevronDown,
+  ChevronUp,
   Copy,
   ExternalLink,
   Eye,
@@ -25,6 +27,7 @@ import {
   Search,
   Sparkles,
   Target,
+  Trash2,
   Users,
   WandSparkles,
   X,
@@ -61,7 +64,9 @@ const homeLoading = ref(true)
 const planItems = ref([])
 const planLoading = ref(false)
 const planBusyReelId = ref(null)
+const planBusyItemId = ref(null)
 const planMessage = ref('')
+const expandedPlanIds = ref({})
 const selectedReel = ref(null)
 const detailLoading = ref(Boolean(initialRoute.page === 'detail' && initialRoute.reelId))
 const editingSection = ref(null)
@@ -578,6 +583,41 @@ async function loadContentPlan() {
   }
 }
 
+function isPlanExpanded(itemId) {
+  return Boolean(expandedPlanIds.value[itemId])
+}
+
+function togglePlanExpanded(itemId) {
+  expandedPlanIds.value = {
+    ...expandedPlanIds.value,
+    [itemId]: !expandedPlanIds.value[itemId],
+  }
+}
+
+async function removeFromContentPlan(item) {
+  if (!item?.id || planBusyItemId.value === item.id) return
+  planBusyItemId.value = item.id
+  planMessage.value = ''
+  saveError.value = ''
+  try {
+    const response = await fetch(`/api/content-plan/${item.id}`, { method: 'DELETE' })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      throw new Error(body.detail || 'Не удалось удалить из плана')
+    }
+    planItems.value = planItems.value.filter((row) => row.id !== item.id)
+    const nextExpanded = { ...expandedPlanIds.value }
+    delete nextExpanded[item.id]
+    expandedPlanIds.value = nextExpanded
+    syncReelPlanFields(item.reel_id, null)
+    planMessage.value = 'Удалено из контент-плана'
+  } catch (error) {
+    saveError.value = error.message
+  } finally {
+    planBusyItemId.value = null
+  }
+}
+
 async function addToContentPlan(reelId) {
   if (!reelId || planBusyReelId.value === reelId) return
   const existing = planEntryForReel(reelId)
@@ -838,7 +878,12 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-if="planItems.length" class="plan-cards">
-          <article v-for="item in planItems" :key="item.id" class="plan-card">
+          <article
+            v-for="item in planItems"
+            :key="item.id"
+            class="plan-card"
+            :class="{ expanded: isPlanExpanded(item.id) }"
+          >
             <div class="plan-card-top">
               <button class="plan-card-thumb" type="button" @click="openReel(item.reel_id)">
                 <img
@@ -854,73 +899,98 @@ onBeforeUnmount(() => {
               <div class="plan-card-heading">
                 <strong>{{ item.title }}</strong>
                 <span>{{ item.author }}<template v-if="formatPostedAt(item.posted_at)"> · {{ formatPostedAt(item.posted_at) }}</template></span>
+                <div class="status-chip compact" :class="item.shoot_status">
+                  <X v-if="item.shoot_status === 'todo'" :size="12" />
+                  <Hourglass v-else-if="item.shoot_status === 'ready'" :size="12" />
+                  <Check v-else :size="12" />
+                  {{ shootStatusLabel(item.shoot_status) }}
+                </div>
               </div>
-              <div class="shoot-status-group" role="group" aria-label="Статус съёмки">
+              <div class="plan-card-controls">
+                <div class="shoot-status-group" role="group" aria-label="Статус съёмки">
+                  <button
+                    type="button"
+                    class="shoot-status-button todo"
+                    :class="{ active: item.shoot_status === 'todo' }"
+                    title="Не взят в работу"
+                    @click="setShootStatus(item.id, 'todo')"
+                  >
+                    <X :size="14" />
+                  </button>
+                  <button
+                    type="button"
+                    class="shoot-status-button ready"
+                    :class="{ active: item.shoot_status === 'ready' }"
+                    title="Ждёт съёмки"
+                    @click="setShootStatus(item.id, 'ready')"
+                  >
+                    <Hourglass :size="14" />
+                  </button>
+                  <button
+                    type="button"
+                    class="shoot-status-button done"
+                    :class="{ active: item.shoot_status === 'done' }"
+                    title="Снят и выложен"
+                    @click="setShootStatus(item.id, 'done')"
+                  >
+                    <Check :size="14" />
+                  </button>
+                </div>
                 <button
+                  class="icon-button plan-remove-button"
                   type="button"
-                  class="shoot-status-button todo"
-                  :class="{ active: item.shoot_status === 'todo' }"
-                  title="Не взят в работу"
-                  @click="setShootStatus(item.id, 'todo')"
+                  title="Удалить из плана"
+                  aria-label="Удалить из плана"
+                  :disabled="planBusyItemId === item.id"
+                  @click="removeFromContentPlan(item)"
                 >
-                  <X :size="14" />
-                </button>
-                <button
-                  type="button"
-                  class="shoot-status-button ready"
-                  :class="{ active: item.shoot_status === 'ready' }"
-                  title="Ждёт съёмки"
-                  @click="setShootStatus(item.id, 'ready')"
-                >
-                  <Hourglass :size="14" />
-                </button>
-                <button
-                  type="button"
-                  class="shoot-status-button done"
-                  :class="{ active: item.shoot_status === 'done' }"
-                  title="Снят и выложен"
-                  @click="setShootStatus(item.id, 'done')"
-                >
-                  <Check :size="14" />
+                  <Trash2 :size="16" />
                 </button>
               </div>
             </div>
 
-            <div class="status-chip" :class="item.shoot_status">
-              <X v-if="item.shoot_status === 'todo'" :size="13" />
-              <Hourglass v-else-if="item.shoot_status === 'ready'" :size="13" />
-              <Check v-else :size="13" />
-              {{ shootStatusLabel(item.shoot_status) }}
-            </div>
-
-            <div class="plan-script-block">
-              <span>ХУК</span>
-              <p>{{ item.hook || 'Хук ещё не готов — откройте карточку рилса' }}</p>
-            </div>
-            <div class="plan-script-block">
-              <span>СКРИПТ</span>
-              <p>{{ item.script || 'Скрипт ещё не готов — откройте карточку рилса' }}</p>
-            </div>
-            <div class="plan-script-block">
-              <span>CALL TO ACTION</span>
-              <p>{{ item.cta || 'CTA ещё не готов' }}</p>
-            </div>
-
-            <div class="plan-card-footer">
-              <a
-                v-if="item.instagram_url"
-                class="open-original-chip"
-                :href="item.instagram_url"
-                target="_blank"
-                rel="noopener noreferrer"
+            <div class="plan-card-toolbar">
+              <button
+                class="ghost-button plan-expand-button"
+                type="button"
+                @click="togglePlanExpanded(item.id)"
               >
-                <ArrowUpRight :size="12" />
-                Оригинальный Reels
-              </a>
+                <ChevronUp v-if="isPlanExpanded(item.id)" :size="15" />
+                <ChevronDown v-else :size="15" />
+                {{ isPlanExpanded(item.id) ? 'Свернуть карточку' : 'Развернуть карточку' }}
+              </button>
               <button class="ghost-button" type="button" @click="openReel(item.reel_id)">
                 Открыть карточку
               </button>
             </div>
+
+            <template v-if="isPlanExpanded(item.id)">
+              <div class="plan-script-block">
+                <span>ХУК</span>
+                <p>{{ item.hook || 'Хук ещё не готов — откройте карточку рилса' }}</p>
+              </div>
+              <div class="plan-script-block">
+                <span>СКРИПТ</span>
+                <p>{{ item.script || 'Скрипт ещё не готов — откройте карточку рилса' }}</p>
+              </div>
+              <div class="plan-script-block">
+                <span>CALL TO ACTION</span>
+                <p>{{ item.cta || 'CTA ещё не готов' }}</p>
+              </div>
+
+              <div class="plan-card-footer">
+                <a
+                  v-if="item.instagram_url"
+                  class="open-original-chip"
+                  :href="item.instagram_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <ArrowUpRight :size="12" />
+                  Оригинальный Reels
+                </a>
+              </div>
+            </template>
           </article>
         </div>
 
