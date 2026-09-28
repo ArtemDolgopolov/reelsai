@@ -86,6 +86,16 @@ export async function claimOauthTicket(ticket) {
   return response.json()
 }
 
+export async function fetchOauthProviders() {
+  try {
+    const response = await api('/api/auth/oauth/providers')
+    if (!response.ok) return { google: false, yandex: false }
+    return response.json()
+  } catch {
+    return { google: false, yandex: false }
+  }
+}
+
 export function oauthStartUrl(provider) {
   return `/api/auth/oauth/${provider}/start`
 }
