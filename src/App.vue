@@ -499,7 +499,7 @@ async function onLogout() {
   competitor.value = null
   competitorReels.value = []
   homeReels.value = []
-  contentPlan.value = []
+  planItems.value = []
   navigate('landing')
 }
 
