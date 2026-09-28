@@ -1,7 +1,7 @@
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { ArrowRight, Eye, EyeOff, LoaderCircle, Lock, Mail, Zap } from '@lucide/vue'
-import { loginAccount, saveChallenge } from '../../authApi.js'
+import { fetchOauthProviders, loginAccount, oauthStartUrl, saveChallenge } from '../../authApi.js'
 
 const emit = defineEmits(['navigate'])
 
@@ -11,6 +11,11 @@ const remember = ref(true)
 const showPassword = ref(false)
 const busy = ref(false)
 const error = ref('')
+const providers = ref({ google: false, yandex: false })
+
+onMounted(async () => {
+  providers.value = await fetchOauthProviders()
+})
 
 async function onSubmit() {
   busy.value = true
@@ -27,6 +32,10 @@ async function onSubmit() {
   } finally {
     busy.value = false
   }
+}
+
+function startOauth(provider) {
+  window.location.href = oauthStartUrl(provider)
 }
 </script>
 
@@ -108,8 +117,22 @@ async function onSubmit() {
 
       <div class="mkt-divider">или войти через</div>
       <div class="mkt-social">
-        <button type="button" disabled title="Скоро — фаза 2">Google</button>
-        <button type="button" disabled title="Скоро — фаза 2">Яндекс</button>
+        <button
+          type="button"
+          :disabled="!providers.google"
+          :title="providers.google ? 'Войти через Google' : 'Добавьте GOOGLE_CLIENT_ID в .env'"
+          @click="startOauth('google')"
+        >
+          Google
+        </button>
+        <button
+          type="button"
+          :disabled="!providers.yandex"
+          :title="providers.yandex ? 'Войти через Яндекс' : 'Добавьте YANDEX_CLIENT_ID в .env'"
+          @click="startOauth('yandex')"
+        >
+          Яндекс
+        </button>
       </div>
 
       <p class="mkt-auth-foot">

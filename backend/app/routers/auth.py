@@ -8,7 +8,7 @@ from app.config import get_settings
 from app.db import get_session
 from app.deps import ACCESS_COOKIE, REFRESH_COOKIE, client_meta, get_current_user
 from app.models import User
-from app.services import auth_service
+from app.services import auth_oauth, auth_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -215,3 +215,107 @@ def logout(
 @router.get("/me", response_model=UserResponse)
 def me(user: User = Depends(get_current_user)) -> UserResponse:
     return UserResponse(**auth_service.user_public(user))
+
+
+OAUTH_STATE_COOKIE = "oauth_state"
+PENDING_CHALLENGE_COOKIE = "pending_challenge"
+
+
+def _public_base(request: Request) -> str:
+    settings = get_settings()
+    if settings.public_app_url:
+        return settings.public_app_url.rstrip("/")
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    if not host:
+        raise HTTPException(status_code=500, detail="Не удалось определить URL приложения")
+    return f"{proto}://{host}"
+
+
+def _oauth_redirect_uri(request: Request, provider: str) -> str:
+    return f"{_public_base(request)}/api/auth/oauth/{provider}/callback"
+
+
+@router.get("/oauth/providers")
+def oauth_providers() -> dict:
+    return auth_oauth.providers_status()
+
+
+@router.get("/oauth/{provider}/start")
+def oauth_start(provider: str, request: Request):
+    from fastapi.responses import RedirectResponse
+
+    if provider not in auth_oauth.SUPPORTED_PROVIDERS:
+        raise HTTPException(status_code=404, detail="Неизвестный провайдер")
+    state = auth_oauth.make_oauth_state()
+    redirect_uri = _oauth_redirect_uri(request, provider)
+    url = auth_oauth.authorize_url(provider, redirect_uri=redirect_uri, state=state)
+    settings = get_settings()
+    response = RedirectResponse(url=url, status_code=302)
+    response.set_cookie(
+        OAUTH_STATE_COOKIE,
+        state,
+        max_age=600,
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
+@router.get("/oauth/{provider}/callback")
+def oauth_callback(
+    provider: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+):
+    import json
+
+    from fastapi.responses import RedirectResponse
+
+    base = _public_base(request)
+    fail = RedirectResponse(url=f"{base}/#login", status_code=302)
+
+    if error:
+        return fail
+    if provider not in auth_oauth.SUPPORTED_PROVIDERS:
+        return fail
+    if not code or not state:
+        return fail
+
+    cookie_state = request.cookies.get(OAUTH_STATE_COOKIE)
+    if not cookie_state or cookie_state != state:
+        return fail
+
+    ip, ua = client_meta(request)
+    redirect_uri = _oauth_redirect_uri(request, provider)
+    try:
+        profile = auth_oauth.exchange_code(provider, code, redirect_uri)
+        user = auth_oauth.upsert_oauth_user(session, profile)
+        challenge = auth_oauth.start_oauth_login_2fa(
+            session, user=user, ip=ip, user_agent=ua
+        )
+    except HTTPException:
+        return fail
+    except Exception:
+        return fail
+
+    settings = get_settings()
+    response = RedirectResponse(url=f"{base}/#verify-otp", status_code=302)
+    response.delete_cookie(OAUTH_STATE_COOKIE, path="/")
+    from urllib.parse import quote
+
+    response.set_cookie(
+        PENDING_CHALLENGE_COOKIE,
+        quote(json.dumps(challenge, ensure_ascii=False)),
+        max_age=600,
+        httponly=False,
+        secure=settings.auth_cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+    return response

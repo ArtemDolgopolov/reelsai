@@ -77,7 +77,38 @@ export async function logoutAccount() {
   await api('/api/auth/logout', { method: 'POST' })
 }
 
+export async function fetchOauthProviders() {
+  const response = await api('/api/auth/oauth/providers')
+  if (!response.ok) return { google: false, yandex: false }
+  return response.json()
+}
+
+export function oauthStartUrl(provider) {
+  return `/api/auth/oauth/${provider}/start`
+}
+
 const CHALLENGE_KEY = 'reelsai_auth_challenge'
+const PENDING_COOKIE = 'pending_challenge'
+
+function readCookie(name) {
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`))
+  return match ? decodeURIComponent(match[1]) : null
+}
+
+function clearCookie(name) {
+  document.cookie = `${name}=; Max-Age=0; path=/`
+}
+
+export function consumePendingChallenge() {
+  const raw = readCookie(PENDING_COOKIE)
+  if (!raw) return null
+  clearCookie(PENDING_COOKIE)
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
 
 export function saveChallenge(challenge) {
   sessionStorage.setItem(CHALLENGE_KEY, JSON.stringify(challenge))
@@ -85,6 +116,11 @@ export function saveChallenge(challenge) {
 
 export function loadChallenge() {
   try {
+    const pending = consumePendingChallenge()
+    if (pending?.challenge_id) {
+      sessionStorage.setItem(CHALLENGE_KEY, JSON.stringify(pending))
+      return pending
+    }
     const raw = sessionStorage.getItem(CHALLENGE_KEY)
     return raw ? JSON.parse(raw) : null
   } catch {
@@ -94,4 +130,6 @@ export function loadChallenge() {
 
 export function clearChallenge() {
   sessionStorage.removeItem(CHALLENGE_KEY)
+  clearCookie(PENDING_COOKIE)
 }
+

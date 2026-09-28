@@ -197,3 +197,27 @@ class AuthSession(SQLModel, table=True):
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     )
+
+
+class OAuthAccount(SQLModel, table=True):
+    __tablename__ = "oauth_accounts"
+    __table_args__ = (
+        UniqueConstraint("provider", "provider_user_id", name="uq_oauth_provider_user"),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    user_id: UUID = Field(foreign_key="users.id", index=True)
+    provider: str = Field(max_length=32, index=True)
+    provider_user_id: str = Field(max_length=255)
+    email: Optional[str] = Field(default=None, max_length=320)
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    )
+    updated_at: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            onupdate=func.now(),
+            nullable=False,
+        )
+    )

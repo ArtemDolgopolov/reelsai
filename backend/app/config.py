@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     auth_dev_expose_otp: bool = False
     resend_api_key: str | None = None
     email_from: str = "AI Рилс Продюсер <onboarding@resend.dev>"
+    public_app_url: str | None = None
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    yandex_client_id: str | None = None
+    yandex_client_secret: str | None = None
 
 
 @lru_cache

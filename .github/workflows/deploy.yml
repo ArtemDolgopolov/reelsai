@@ -33,6 +33,20 @@ jobs:
           sudo rsync -a --delete --exclude .git --exclude .env ./ /opt/reelsai/
           if [ ! -f /opt/reelsai/.env ]; then
             cp /opt/reelsai/.env.example /opt/reelsai/.env
+          else
+            # Merge new keys from example without overwriting existing values
+            while IFS= read -r line || [ -n "$line" ]; do
+              case "$line" in
+                ''|\#*) continue ;;
+              esac
+              key="${line%%=*}"
+              if [ -n "$key" ] && ! grep -q "^${key}=" /opt/reelsai/.env; then
+                echo "$line" >> /opt/reelsai/.env
+              fi
+            done < /opt/reelsai/.env.example
+          fi
+          if ! grep -q '^PUBLIC_APP_URL=' /opt/reelsai/.env; then
+            echo 'PUBLIC_APP_URL=http://18.192.179.203' >> /opt/reelsai/.env
           fi
           sudo chown -R "$USER":"$USER" /opt/reelsai
 
