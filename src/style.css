@@ -1688,6 +1688,45 @@ img {
   margin-top: 17px;
 }
 
+.detail-remix-lead {
+  margin: 6px 0 0;
+  max-width: 36rem;
+  color: #64748b;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.original-transcript-card {
+  padding: 14px 16px;
+  color: #1f2937;
+  background:
+    linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+}
+
+.original-transcript-card .insight-title {
+  margin-bottom: 10px;
+}
+
+.original-transcript-card .insight-title strong {
+  display: block;
+}
+
+.original-transcript-card .insight-title small {
+  color: #64748b;
+}
+
+.original-transcript-text {
+  margin: 0;
+  color: #334155;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  max-height: 220px;
+  overflow: auto;
+}
+
 .ai-chat-card {
   padding: 16px;
   color: #1f2937;

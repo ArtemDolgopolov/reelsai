@@ -461,6 +461,93 @@ def schedule_analysis(reel_id: UUID) -> None:
     thread.start()
 
 
+def prepare_russian_remix(reel: Reel, competitor: Competitor) -> tuple[str, str, str, str, bool]:
+    """
+    Force a Russian adaptation: overview + hook/script/cta for filming.
+    Returns overview, hook, script, cta, used_llm.
+    """
+    from app.services.serializers import format_duration, format_views
+
+    views_label = format_views(reel.views_count)
+    duration_label = format_duration(reel.duration_seconds)
+    author = competitor.full_name or f"@{competitor.username}"
+    handle = f"@{competitor.username}"
+    spoken = continuous_text(reel.transcript)
+    caption = continuous_text(reel.caption)
+    title = continuous_text(reel.title)
+    has_speech = looks_like_real_transcript(spoken)
+    used_llm = False
+    overview = continuous_text(reel.analysis_overview)
+    hook = continuous_text(reel.hook)
+    script = continuous_text(reel.script)
+    cta = continuous_text(reel.cta) or DEFAULT_CTA
+
+    # Dedicated remix pass: translate + structure for RU filming script.
+    source = spoken if has_speech else (caption or title)
+    if source:
+        bundle = analyze_reel_bundle(
+            author=author,
+            handle=handle,
+            duration_label=duration_label,
+            views_label=views_label,
+            transcript=spoken if has_speech else None,
+            caption=caption or None,
+            title=title or None,
+            need_overview=True,
+            allow_wait=True,
+        )
+        if bundle and bundle.get("hook") and bundle.get("script"):
+            overview = (
+                f"{build_header(author, handle, duration_label, views_label)}\n\n"
+                f"{(bundle.get('overview') or '').strip()}"
+            ).strip()
+            hook = bundle["hook"][:200]
+            script = continuous_text(bundle["script"])[:2000]
+            cta = continuous_text(bundle.get("cta"))[:500] or DEFAULT_CTA
+            used_llm = True
+            store_cached_analysis(reel, overview, hook, script, cta, from_llm=True)
+
+    if not hook or not script:
+        overview2, hook2, script2, cta2, _pending = enrich_reel_analysis(
+            reel,
+            competitor,
+            views_label=views_label,
+            duration_label=duration_label,
+            sync_llm=True,
+        )
+        if not overview:
+            overview = overview2
+        if not hook:
+            hook = hook2
+        if not script:
+            script = script2
+        if not cta:
+            cta = cta2
+        used_llm = used_llm or _is_ai_overview(overview)
+
+    if not hook or not script:
+        hook, script, cta = split_transcript_into_sections(
+            spoken if has_speech else None,
+            caption or title,
+            use_llm=True,
+        )
+
+    if not overview or any(marker in overview.lower() for marker in _PLACEHOLDER_MARKERS):
+        overview = offline_overview(
+            author=author,
+            handle=handle,
+            duration_label=duration_label,
+            views_label=views_label,
+            spoken=spoken,
+            caption=caption,
+            title=title,
+            has_speech=has_speech,
+            waiting=False,
+        )
+
+    return overview, hook[:200], script[:2000], (cta or DEFAULT_CTA)[:500], used_llm
+
+
 def build_reel_overview(reel: Reel, competitor: Competitor, *, views_label: str, duration_label: str) -> str:
     overview, _, _, _, _ = enrich_reel_analysis(
         reel,

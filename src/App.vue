@@ -70,6 +70,9 @@ const planBusyReelId = ref(null)
 const planBusyItemId = ref(null)
 const planMessage = ref('')
 const expandedPlanIds = ref({})
+const remixMode = ref(false)
+const remixLoading = ref(false)
+const remixMessage = ref('')
 const selectedReel = ref(null)
 const detailLoading = ref(Boolean(initialRoute.page === 'detail' && initialRoute.reelId))
 const editingSection = ref(null)
@@ -129,6 +132,7 @@ const hasRemixDrafts = computed(() => {
 const isAnalysisLoading = computed(() => {
   const reel = selectedReel.value
   if (!reel) return false
+  if (remixLoading.value && !hasRemixDrafts.value) return true
   // If Hook/Script already exist, never blank the whole column behind skeletons.
   if (hasRemixDrafts.value) return false
   return Boolean(reel.speech_pending || reel.analysis_pending || speechPolling.value)
@@ -267,12 +271,15 @@ function navigate(page, id = null) {
     selectedReel.value = null
     editingSection.value = null
     selectedCompetitorId.value = null
+    remixMode.value = false
+    remixMessage.value = ''
   }
   if (page === 'plan') {
     stopSpeechPolling()
     selectedReel.value = null
     editingSection.value = null
     selectedCompetitorId.value = null
+    remixMode.value = false
     void loadContentPlan()
   }
   if (page === 'competitors' && !id) {
@@ -362,12 +369,14 @@ async function loadHomeReels() {
   }
 }
 
-async function openReel(reelId, { syncHash = true } = {}) {
+async function openReel(reelId, { syncHash = true, remix = false } = {}) {
   if (!reelId) return
   detailLoading.value = true
   saveError.value = ''
   editingSection.value = null
   copiedSection.value = ''
+  remixMode.value = remix
+  remixMessage.value = ''
   stopSpeechPolling()
   analysisRevealKey.value += 1
   if (syncHash) {
@@ -390,6 +399,49 @@ async function openReel(reelId, { syncHash = true } = {}) {
     selectedReel.value = null
   } finally {
     detailLoading.value = false
+  }
+}
+
+async function startRemix(reelId) {
+  if (!reelId || remixLoading.value) return
+  await openReel(reelId, { remix: true })
+  if (!selectedReel.value || selectedReel.value.id !== reelId) return
+
+  remixLoading.value = true
+  remixMessage.value = 'Готовим русский сценарий: перевод и разбивка на хук / скрипт / CTA…'
+  saveError.value = ''
+  try {
+    const response = await fetch(`/api/reels/${reelId}/remix`, { method: 'POST' })
+    const body = await response.json()
+    if (!response.ok) {
+      const detail = Array.isArray(body.detail)
+        ? body.detail.map((item) => item.msg || item).join('; ')
+        : body.detail
+      throw new Error(detail || 'Не удалось подготовить Remix')
+    }
+    selectedReel.value = body
+    analysisRevealKey.value += 1
+    remixMessage.value =
+      'Русский сценарий готов. Отредактируйте блоки под себя и утвердите в контент-план.'
+    stopSpeechPolling()
+  } catch (error) {
+    saveError.value = error.message
+    remixMessage.value = ''
+  } finally {
+    remixLoading.value = false
+  }
+}
+
+async function approveRemixToPlan() {
+  if (!selectedReel.value?.id) return
+  if (selectedInPlan.value) {
+    navigate('plan')
+    return
+  }
+  const entry = await addToContentPlan(selectedReel.value.id)
+  if (entry) {
+    remixMessage.value = 'Сценарий утверждён и добавлен в контент-план'
+    navigate('plan')
   }
 }
 
@@ -817,7 +869,8 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div class="home-feed-actions">
-              <button class="ghost-button remix-chip" type="button" @click="openReel(reel.id)">
+              <button class="ghost-button remix-chip" type="button" @click="startRemix(reel.id)">
+                <WandSparkles :size="14" />
                 Remix
               </button>
               <button
@@ -1231,14 +1284,24 @@ onBeforeUnmount(() => {
             </div>
             <div class="video-actions">
               <button
+                v-if="remixMode"
                 class="primary-button wide"
                 type="button"
-                :disabled="planBusyReelId === selectedReel.id"
-                @click="selectedInPlan ? navigate('plan') : addToContentPlan(selectedReel.id)"
+                :disabled="planBusyReelId === selectedReel.id || remixLoading"
+                @click="approveRemixToPlan"
               >
-                <Check v-if="selectedInPlan" :size="17" />
-                <Clapperboard v-else :size="17" />
-                {{ selectedInPlan ? 'Открыть в контент-плане' : '+ В план' }}
+                <Clapperboard :size="17" />
+                {{ selectedInPlan ? 'Уже в плане — открыть' : 'Утвердить в контент-план' }}
+              </button>
+              <button
+                v-else
+                class="primary-button wide"
+                type="button"
+                :disabled="remixLoading"
+                @click="startRemix(selectedReel.id)"
+              >
+                <WandSparkles :size="17" />
+                {{ remixLoading ? 'Готовим Remix…' : 'Сделать Remix' }}
               </button>
               <a
                 v-if="selectedReel.instagram_url"
@@ -1256,11 +1319,21 @@ onBeforeUnmount(() => {
           <div class="analysis-column">
             <header class="detail-title">
               <div>
-                <span class="eyebrow">AI-разбор</span>
+                <span class="eyebrow">{{ remixMode ? 'Remix · адаптация под съёмку' : 'AI-разбор' }}</span>
                 <h1>{{ selectedReel.title }}</h1>
+                <p v-if="remixMode" class="detail-remix-lead">
+                  Оригинал → русский сценарий (хук / скрипт / CTA) → правки → контент-план
+                </p>
               </div>
-              <button class="icon-button" type="button" aria-label="Другие действия">
-                <MoreVertical :size="18" />
+              <button
+                v-if="!remixMode"
+                class="ghost-button"
+                type="button"
+                :disabled="remixLoading"
+                @click="startRemix(selectedReel.id)"
+              >
+                <WandSparkles :size="15" />
+                Remix
               </button>
             </header>
 
@@ -1291,6 +1364,14 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="insight-list">
+              <div v-if="remixMessage" class="save-notice success">
+                <WandSparkles :size="15" />
+                {{ remixMessage }}
+              </div>
+              <div v-if="remixLoading" class="save-notice success">
+                <LoaderCircle :size="15" class="spin" />
+                Готовим русский Remix-сценарий…
+              </div>
               <div v-if="saveState === 'saved'" class="save-notice success">
                 <Check :size="15" />
                 Изменения сохранены
@@ -1299,6 +1380,27 @@ onBeforeUnmount(() => {
                 <CircleHelp :size="15" />
                 {{ saveError }}
               </div>
+
+              <section v-if="selectedReel.transcript" class="original-transcript-card">
+                <div class="insight-title">
+                  <span class="insight-icon"><FileText :size="15" /></span>
+                  <div>
+                    <strong>Оригинал · транскрипт</strong>
+                    <small>Что говорит автор в исходном ролике</small>
+                  </div>
+                </div>
+                <p class="original-transcript-text">{{ selectedReel.transcript }}</p>
+              </section>
+
+              <section v-else-if="selectedReel.speech_pending || remixLoading" class="original-transcript-card">
+                <div class="insight-title">
+                  <span class="insight-icon"><LoaderCircle :size="15" class="spin" /></span>
+                  <div>
+                    <strong>Оригинал · транскрипт</strong>
+                    <small>Расшифровываем речь автора…</small>
+                  </div>
+                </div>
+              </section>
 
               <Transition name="analysis-fade" mode="out-in">
                 <div
@@ -1379,8 +1481,8 @@ onBeforeUnmount(() => {
                     <div class="ai-chat-head">
                       <span class="ai-avatar"><Sparkles :size="16" /></span>
                       <div>
-                        <strong>Reels AI</strong>
-                        <small>Про что ролик</small>
+                        <strong>{{ remixMode ? 'Remix AI' : 'Reels AI' }}</strong>
+                        <small>{{ remixMode ? 'Русская адаптация сценария' : 'Про что ролик' }}</small>
                       </div>
                       <span v-if="isOverviewLoading" class="ai-status ai-status-live">
                         <LoaderCircle :size="13" class="spin" />
@@ -1401,8 +1503,8 @@ onBeforeUnmount(() => {
                     <div class="insight-title">
                       <span class="insight-icon"><Zap :size="18" fill="currentColor" /></span>
                       <span>
-                        <strong>Hook</strong>
-                        <small>Первые секунды — стоп-скролл.</small>
+                        <strong>{{ remixMode ? 'Хук (RU)' : 'Hook' }}</strong>
+                        <small>{{ remixMode ? 'Русский цепляющий заход для вашей съёмки' : 'Первые секунды — стоп-скролл.' }}</small>
                       </span>
                       <div v-if="editingSection !== 'hook'" class="insight-actions">
                         <button type="button" @click="copySection('hook')">
@@ -1438,7 +1540,7 @@ onBeforeUnmount(() => {
                         </button>
                       </div>
                     </div>
-                    <blockquote v-else>«{{ selectedReel.hook || 'Добавь hook вручную' }}»</blockquote>
+                    <blockquote v-else>«{{ selectedReel.hook || (remixMode ? 'Отредактируйте хук под себя' : 'Добавь hook вручную') }}»</blockquote>
                     <span class="counter">
                       {{ editingSection === 'hook' ? draft.length : (selectedReel.hook || '').length }}/{{ sectionLimits.hook }}
                     </span>
@@ -1448,8 +1550,8 @@ onBeforeUnmount(() => {
                     <div class="insight-title">
                       <span class="insight-icon"><FileText :size="18" /></span>
                       <span>
-                        <strong>Script</strong>
-                        <small>Структура и ключевые тезисы.</small>
+                        <strong>{{ remixMode ? 'Сценарий (RU)' : 'Script' }}</strong>
+                        <small>{{ remixMode ? 'Основной текст на русском — правьте под свой контент' : 'Структура и ключевые тезисы.' }}</small>
                       </span>
                       <div v-if="editingSection !== 'script'" class="insight-actions">
                         <button type="button" @click="copySection('script')">
@@ -1486,7 +1588,7 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
                     <p v-if="scriptBody" class="script-prose">{{ scriptBody }}</p>
-                    <p v-else class="preserve-lines">Добавь скрипт вручную</p>
+                    <p v-else class="preserve-lines">{{ remixMode ? 'Отредактируйте сценарий под свой контент' : 'Добавь скрипт вручную' }}</p>
                     <span class="counter">
                       {{ editingSection === 'script' ? draft.length : scriptBody.length }}/{{ sectionLimits.script }}
                     </span>
@@ -1496,8 +1598,8 @@ onBeforeUnmount(() => {
                     <div class="insight-title">
                       <span class="insight-icon"><Target :size="18" /></span>
                       <span>
-                        <strong>Call to Action</strong>
-                        <small>Призыв в финале ролика.</small>
+                        <strong>{{ remixMode ? 'Призыв к действию (RU)' : 'Call to Action' }}</strong>
+                        <small>{{ remixMode ? 'Финал на русском — комментарий, подписка, сохранение' : 'Призыв в финале ролика.' }}</small>
                       </span>
                       <div v-if="editingSection !== 'cta'" class="insight-actions">
                         <button type="button" @click="copySection('cta')">

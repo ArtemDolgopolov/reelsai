@@ -8,10 +8,10 @@ from app.db import get_session
 from app.models import Competitor, ContentPlanItem, Reel
 from app.schemas import ReelDetail, ReelListItem, ReelUpdateRequest
 from app.services.instagram_free import looks_like_real_transcript
-from app.services.overview import schedule_analysis
+from app.services.overview import _is_ai_overview, prepare_russian_remix, schedule_analysis
 from app.services.serializers import reel_to_detail, reel_to_list_item
-from app.services.stt_jobs import schedule_transcripts
-
+from app.services.stt_jobs import ensure_reel_transcript, schedule_transcripts
+from app.services.transcript_sections import DEFAULT_CTA
 router = APIRouter(prefix="/reels", tags=["reels"])
 
 SECTION_LIMITS = {
@@ -94,6 +94,51 @@ def get_reel(
     detail = reel_to_detail(reel, competitor, session=session)
     if detail.analysis_pending or detail.speech_pending:
         background_tasks.add_task(schedule_analysis, reel.id)
+    return detail
+
+
+@router.post("/{reel_id}/remix", response_model=ReelDetail)
+def remix_reel(
+    reel_id: UUID,
+    session: Session = Depends(get_session),
+) -> ReelDetail:
+    """Build a Russian remix script from the original transcript for filming."""
+    reel = session.get(Reel, reel_id)
+    if reel is None:
+        raise HTTPException(status_code=404, detail="Reel not found")
+    competitor = session.get(Competitor, reel.competitor_id)
+    if competitor is None:
+        raise HTTPException(status_code=404, detail="Competitor not found")
+
+    # Need spoken transcript (or empty marker) before adapting.
+    if reel.transcript is None:
+        ensure_reel_transcript(session, reel, competitor)
+        session.refresh(reel)
+
+    overview, hook, script, cta, used_llm = prepare_russian_remix(reel, competitor)
+    reel.hook = hook or reel.hook or ""
+    reel.script = script or reel.script or ""
+    reel.cta = cta or reel.cta or DEFAULT_CTA
+    if overview and (
+        _is_ai_overview(overview)
+        or not any(
+            marker in overview.lower()
+            for marker in (
+                "через пару секунд",
+                "готовлю короткое объяснение",
+                "собираю объяснение",
+            )
+        )
+    ):
+        reel.analysis_overview = overview[:4000]
+    session.add(reel)
+    session.commit()
+    session.refresh(reel)
+
+    detail = reel_to_detail(reel, competitor, session=session)
+    if not used_llm and detail.analysis_pending:
+        # Soft fallback already saved — still ok to return.
+        pass
     return detail
 
 
