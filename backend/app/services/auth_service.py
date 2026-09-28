@@ -37,7 +37,7 @@ def create_challenge(
     purpose: AuthChallengePurpose,
     ip: str | None,
     user_agent: str | None,
-) -> tuple[AuthChallenge, str]:
+) -> tuple[AuthChallenge, str, bool]:
     code = generate_otp_code()
     challenge = AuthChallenge(
         user_id=user.id,
@@ -50,18 +50,26 @@ def create_challenge(
     session.add(challenge)
     session.commit()
     session.refresh(challenge)
-    send_otp_email(to_email=user.email, code=code, purpose=purpose.value)
-    return challenge, code
+    email_sent = send_otp_email(to_email=user.email, code=code, purpose=purpose.value)
+    return challenge, code, email_sent
 
 
-def challenge_response(challenge: AuthChallenge, email: str, code: str | None = None) -> dict:
+def challenge_response(
+    challenge: AuthChallenge,
+    email: str,
+    code: str | None = None,
+    *,
+    email_sent: bool = True,
+) -> dict:
     payload = {
         "challenge_id": str(challenge.id),
         "email_masked": mask_email(email),
         "expires_in_sec": get_settings().auth_otp_ttl_min * 60,
         "purpose": challenge.purpose.value,
+        "email_sent": email_sent,
     }
-    if get_settings().auth_dev_expose_otp and code:
+    # Show code on screen when mail failed (e.g. Resend test domain) or in explicit dev mode.
+    if code and (get_settings().auth_dev_expose_otp or not email_sent):
         payload["debug_code"] = code
     return payload
 
@@ -102,14 +110,14 @@ def register_user(
         session.commit()
         session.refresh(user)
 
-    challenge, code = create_challenge(
+    challenge, code, email_sent = create_challenge(
         session,
         user=user,
         purpose=AuthChallengePurpose.register,
         ip=ip,
         user_agent=user_agent,
     )
-    return challenge_response(challenge, user.email, code)
+    return challenge_response(challenge, user.email, code, email_sent=email_sent)
 
 
 def login_with_password(
@@ -130,23 +138,23 @@ def login_with_password(
     if not verify_password(user.password_hash, password):
         raise invalid
     if user.status == UserStatus.pending_verification:
-        challenge, code = create_challenge(
+        challenge, code, email_sent = create_challenge(
             session,
             user=user,
             purpose=AuthChallengePurpose.register,
             ip=ip,
             user_agent=user_agent,
         )
-        return challenge_response(challenge, user.email, code)
+        return challenge_response(challenge, user.email, code, email_sent=email_sent)
 
-    challenge, code = create_challenge(
+    challenge, code, email_sent = create_challenge(
         session,
         user=user,
         purpose=AuthChallengePurpose.login_2fa,
         ip=ip,
         user_agent=user_agent,
     )
-    return challenge_response(challenge, user.email, code)
+    return challenge_response(challenge, user.email, code, email_sent=email_sent)
 
 
 def resend_otp(
@@ -166,14 +174,14 @@ def resend_otp(
     old.consumed_at = datetime.now(timezone.utc)
     session.add(old)
     session.commit()
-    challenge, code = create_challenge(
+    challenge, code, email_sent = create_challenge(
         session,
         user=user,
         purpose=old.purpose,
         ip=ip,
         user_agent=user_agent,
     )
-    return challenge_response(challenge, user.email, code)
+    return challenge_response(challenge, user.email, code, email_sent=email_sent)
 
 
 def verify_challenge_and_issue_session(

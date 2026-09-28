@@ -40,6 +40,7 @@ class ChallengeResponse(BaseModel):
     expires_in_sec: int
     purpose: str
     debug_code: str | None = None
+    email_sent: bool = True
 
 
 class UserResponse(BaseModel):

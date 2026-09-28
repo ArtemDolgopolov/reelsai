@@ -11,11 +11,14 @@ const resendBusy = ref(false)
 const error = ref('')
 const challenge = ref(loadChallenge())
 const debugCode = computed(() => challenge.value?.debug_code || '')
+const emailSent = computed(() => challenge.value?.email_sent !== false)
 
 onMounted(() => {
   if (!challenge.value?.challenge_id) {
     emit('navigate', 'login')
+    return
   }
+  if (debugCode.value) code.value = debugCode.value
 })
 
 async function onSubmit() {
@@ -66,10 +69,14 @@ async function onResend() {
 
     <form class="mkt-auth-card" @submit.prevent="onSubmit">
       <h1>Код подтверждения</h1>
-      <p>
+      <p v-if="emailSent">
         Мы отправили 6-значный код на
         <strong>{{ challenge?.email_masked || 'вашу почту' }}</strong>.
         Введите его, чтобы продолжить.
+      </p>
+      <p v-else>
+        Письмо на <strong>{{ challenge?.email_masked || 'почту' }}</strong> сейчас не ушло
+        (тестовый Resend шлёт только на почту аккаунта Resend). Используйте код ниже.
       </p>
 
       <div class="mkt-field">
@@ -90,7 +97,7 @@ async function onResend() {
       </div>
 
       <p v-if="debugCode" class="mkt-auth-foot" style="margin-bottom: 12px">
-        Dev-код: <strong>{{ debugCode }}</strong>
+        Код для входа: <strong style="font-size: 18px; letter-spacing: 0.08em">{{ debugCode }}</strong>
       </p>
       <p v-if="error" class="mkt-auth-foot" style="color: #be123c; margin-bottom: 12px">{{ error }}</p>
 

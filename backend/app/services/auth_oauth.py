@@ -273,11 +273,11 @@ def start_oauth_login_2fa(
     user_agent: str | None,
 ) -> dict:
     """OAuth is factor 1 — still require mandatory email OTP (factor 2)."""
-    challenge, code = create_challenge(
+    challenge, code, email_sent = create_challenge(
         session,
         user=user,
         purpose=AuthChallengePurpose.login_2fa,
         ip=ip,
         user_agent=user_agent,
     )
-    return challenge_response(challenge, user.email, code)
+    return challenge_response(challenge, user.email, code, email_sent=email_sent)

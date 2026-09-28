@@ -7,7 +7,8 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 
-def send_otp_email(*, to_email: str, code: str, purpose: str) -> None:
+def send_otp_email(*, to_email: str, code: str, purpose: str) -> bool:
+    """Send OTP email. Returns True if delivered (or skipped without key), False on provider error."""
     settings = get_settings()
     if purpose == "register":
         subject = "Код подтверждения регистрации — AI Рилс Продюсер"
@@ -28,22 +29,29 @@ def send_otp_email(*, to_email: str, code: str, purpose: str) -> None:
 
     if not settings.resend_api_key:
         logger.warning("RESEND_API_KEY is not set — OTP only logged, email not sent")
-        return
+        return False
 
-    response = httpx.post(
-        "https://api.resend.com/emails",
-        headers={
-            "Authorization": f"Bearer {settings.resend_api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "from": settings.email_from,
-            "to": [to_email],
-            "subject": subject,
-            "text": body,
-        },
-        timeout=20.0,
-    )
+    try:
+        response = httpx.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {settings.resend_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": settings.email_from,
+                "to": [to_email],
+                "subject": subject,
+                "text": body,
+            },
+            timeout=20.0,
+        )
+    except Exception:
+        logger.exception("Resend request failed")
+        return False
+
     if response.status_code >= 400:
+        # Typical: onboarding@resend.dev can only send to the Resend account email.
         logger.error("Resend failed: %s %s", response.status_code, response.text)
-        raise RuntimeError("Не удалось отправить письмо с кодом")
+        return False
+    return True
