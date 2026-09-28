@@ -82,14 +82,14 @@ def authorize_url(provider: str, *, redirect_uri: str, state: str) -> str:
     if provider == "yandex":
         if not provider_enabled("yandex"):
             raise HTTPException(status_code=503, detail="Яндекс OAuth не настроен")
+        # Do not pass `scope` here: new Yandex ID apps use permissions from the
+        # console only. Requesting login:email/... that aren't linked → invalid_scope.
         params = {
             "response_type": "code",
             "client_id": settings.yandex_client_id,
             "redirect_uri": redirect_uri,
             "state": state,
             "force_confirm": "yes",
-            # Required for email — otherwise login.yandex.ru/info has no mailbox.
-            "scope": "login:email login:info login:avatar",
         }
         return f"https://oauth.yandex.ru/authorize?{urlencode(params)}"
 
