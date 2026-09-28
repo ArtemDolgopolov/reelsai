@@ -81,6 +81,7 @@ const detailLoading = ref(Boolean(initialRoute.page === 'detail' && initialRoute
 const detailVideo = ref(null)
 const videoPlaying = ref(false)
 const videoMuted = ref(true)
+const videoVolume = ref(0.7)
 const videoProgressPct = ref(0)
 const videoCurrentLabel = ref('0:00')
 const videoBusy = ref(false)
@@ -339,7 +340,7 @@ async function toggleVideoPlayback() {
     const el = detailVideo.value
     if (!el) return
     if (el.paused) {
-      el.muted = videoMuted.value
+      applyVideoAudio()
       try {
         await el.play()
       } catch {
@@ -351,7 +352,7 @@ async function toggleVideoPlayback() {
         await new Promise((r) => setTimeout(r, 80))
         const retry = detailVideo.value
         if (retry) {
-          retry.muted = videoMuted.value
+          applyVideoAudio()
           await retry.play().catch(() => {
             saveError.value = 'Не удалось воспроизвести видео'
           })
@@ -365,10 +366,28 @@ async function toggleVideoPlayback() {
   }
 }
 
-function toggleVideoMute() {
-  videoMuted.value = !videoMuted.value
+function applyVideoAudio() {
   const el = detailVideo.value
-  if (el) el.muted = videoMuted.value
+  if (!el) return
+  el.muted = videoMuted.value
+  el.volume = Math.min(1, Math.max(0, videoVolume.value))
+}
+
+function toggleVideoMute() {
+  if (videoMuted.value) {
+    videoMuted.value = false
+    if (videoVolume.value <= 0.01) videoVolume.value = 0.7
+  } else {
+    videoMuted.value = true
+  }
+  applyVideoAudio()
+}
+
+function onVideoVolumeInput(event) {
+  const next = Number(event?.target?.value)
+  videoVolume.value = Number.isFinite(next) ? Math.min(1, Math.max(0, next)) : 0.7
+  videoMuted.value = videoVolume.value <= 0.01
+  applyVideoAudio()
 }
 
 function posterLine(reel) {
@@ -1446,16 +1465,27 @@ onBeforeUnmount(() => {
                 <LoaderCircle v-if="videoBusy" :size="22" class="spin" />
                 <Play v-else :size="24" fill="currentColor" />
               </button>
-              <button
-                v-if="videoPlaying || playbackSrc"
-                type="button"
-                class="video-mute-btn"
-                :aria-label="videoMuted ? 'Включить звук' : 'Выключить звук'"
-                @click.stop="toggleVideoMute"
-              >
-                <VolumeX v-if="videoMuted" :size="16" />
-                <Volume2 v-else :size="16" />
-              </button>
+              <div v-if="videoPlaying || playbackSrc" class="video-volume" @click.stop>
+                <button
+                  type="button"
+                  class="video-mute-btn"
+                  :aria-label="videoMuted || videoVolume <= 0.01 ? 'Включить звук' : 'Выключить звук'"
+                  @click="toggleVideoMute"
+                >
+                  <VolumeX v-if="videoMuted || videoVolume <= 0.01" :size="16" />
+                  <Volume2 v-else :size="16" />
+                </button>
+                <input
+                  class="video-volume-slider"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  :value="videoMuted ? 0 : videoVolume"
+                  aria-label="Громкость"
+                  @input="onVideoVolumeInput"
+                />
+              </div>
               <span class="video-progress"><i :style="{ width: `${videoProgressPct}%` }"></i></span>
               <span class="video-time">{{ videoCurrentLabel }} / {{ selectedDurationLabel }}</span>
             </div>
