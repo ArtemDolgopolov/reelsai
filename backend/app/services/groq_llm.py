@@ -372,7 +372,8 @@ def translate_transcript_to_russian(transcript: str, *, allow_wait: bool = True)
     if not raw:
         return None
     cleaned = re.sub(r"\s+", " ", raw).strip().strip("\"'«»")
-    if len(cleaned) < 20:
+    min_len = 6 if len(spoken) < 120 else 16
+    if len(cleaned) < min_len:
         return None
     # Reject if model echoed English.
     if _latin_share(cleaned) > 0.45:
@@ -389,68 +390,111 @@ def remix_bilingual_bundle(
     handle: str = "",
 ) -> dict[str, str] | None:
     """
-    Build Remix payload: full Russian translation + hook/script/cta.
-    translation ≈ full RU of the original speech (shown side-by-side with original).
+    Build Remix payload with original + Russian for hook / script / cta.
     """
+    from app.services.transcript_sections import DEFAULT_CTA, continuous_text, split_transcript_into_sections
+
     spoken = (transcript or "").strip()
     source = spoken or (caption or "").strip() or (title or "").strip()
     if not source:
         return None
 
-    translation = translate_transcript_to_russian(source, allow_wait=True)
-    if not translation:
-        return None
+    # Heuristic split of the original speech — always available for left columns.
+    orig_hook, orig_script, orig_cta = split_transcript_into_sections(
+        spoken if spoken else None,
+        caption or title,
+        use_llm=False,
+    )
+    orig_hook = continuous_text(orig_hook)[:200]
+    orig_script = continuous_text(orig_script)[:2000]
+    orig_cta = continuous_text(orig_cta)[:500] or DEFAULT_CTA
 
     system = (
-        "Ты сценарист Reels. На вход — русский перевод зарубежного ролика. "
-        "Собери сценарий для съёмки и верни ТОЛЬКО JSON с ключами "
-        "overview, hook, script, cta. "
-        "overview — 2 коротких абзаца по-русски: о чём ролик и какой посыл. "
-        "hook — цепляющее начало на русском (1–2 предложения, до 200 символов). "
-        "script — основной текст на русском сплошным абзацем; опирайся на перевод, "
-        "можно слегка сжать, но не оставляй английский. "
-        "cta — короткий финальный призыв на русском. "
-        "Пиши естественно для устной русской речи."
+        "Ты сценарист и переводчик вертикальных Reels. "
+        "Разбей оригинал на hook / script / cta и переведи каждый блок на русский. "
+        "Верни ТОЛЬКО JSON с ключами: "
+        "hook_original, hook_ru, script_original, script_ru, cta_original, cta_ru, overview. "
+        "hook_original / script_original / cta_original — фрагменты ИСХОДНОГО текста "
+        "(не выдумывай; бери из расшифровки). "
+        "hook_ru / script_ru / cta_ru — естественный русский перевод тех же блоков "
+        "для съёмки (не машинный дословный калек). "
+        "hook — 1–2 предложения, script — основной текст абзацем, cta — короткий призыв. "
+        "overview — 2 коротких абзаца по-русски: о чём ролик. "
+        "Не оставляй английский в *_ru полях."
     )
     user = (
         (f"Автор: {author} ({handle})\n" if author or handle else "")
-        + f"Русский перевод оригинала:\n{translation[:1600]}"
+        + f"Расшифровка речи:\n{source[:1800]}"
     )
     raw = groq_chat(
         system=system,
         user=user,
-        temperature=0.2,
-        max_tokens=750,
+        temperature=0.15,
+        max_tokens=1100,
         allow_wait=True,
     )
-    hook = translation[:200]
-    script = translation[:2000]
-    cta = "Сохрани и попробуй этот формат в своём следующем рилсе."
-    overview = (
-        "Этот рилс адаптирован под русскоязычную съёмку. "
-        "Ниже — перевод оригинала: отредактируйте текст под свой контент."
-    )
+
+    hook_ru = ""
+    script_ru = ""
+    cta_ru = ""
+    overview = ""
     if raw:
         data = _extract_json_object(raw) or {}
-        maybe_hook = _clean_prose(data.get("hook"), 200)
-        maybe_script = _clean_prose(data.get("script"), 2000)
-        maybe_cta = _clean_prose(data.get("cta"), 500)
+        maybe_oh = _clean_prose(data.get("hook_original"), 200)
+        maybe_os = _clean_prose(data.get("script_original"), 2000)
+        maybe_oc = _clean_prose(data.get("cta_original"), 500)
+        if maybe_oh:
+            orig_hook = maybe_oh
+        if maybe_os:
+            orig_script = maybe_os
+        if maybe_oc:
+            orig_cta = maybe_oc
+
+        maybe_hook = _clean_prose(data.get("hook_ru"), 200)
+        maybe_script = _clean_prose(data.get("script_ru"), 2000)
+        maybe_cta = _clean_prose(data.get("cta_ru"), 500)
         maybe_overview = str(data.get("overview") or "").strip()
         if maybe_hook and _latin_share(maybe_hook) < 0.45:
-            hook = maybe_hook
+            hook_ru = maybe_hook
         if maybe_script and _latin_share(maybe_script) < 0.45:
-            script = maybe_script
-        else:
-            script = translation[:2000]
+            script_ru = maybe_script
         if maybe_cta and _latin_share(maybe_cta) < 0.45:
-            cta = maybe_cta
+            cta_ru = maybe_cta
         if maybe_overview and _latin_share(maybe_overview) < 0.45:
             overview = maybe_overview[:1600]
 
+    # Fallback: translate each original block separately if JSON pass failed.
+    if not hook_ru or not script_ru:
+        full_ru = translate_transcript_to_russian(source, allow_wait=True)
+        if full_ru:
+            if not hook_ru:
+                piece = translate_transcript_to_russian(orig_hook, allow_wait=True) if orig_hook else None
+                hook_ru = (piece or full_ru)[:200]
+            if not script_ru:
+                piece = translate_transcript_to_russian(orig_script, allow_wait=True) if orig_script else None
+                script_ru = (piece or full_ru)[:2000]
+            if not cta_ru:
+                piece = translate_transcript_to_russian(orig_cta, allow_wait=True) if orig_cta else None
+                cta_ru = (piece or DEFAULT_CTA)[:500]
+
+    if not hook_ru or not script_ru:
+        return None
+
+    if not cta_ru:
+        cta_ru = DEFAULT_CTA
+    if not overview:
+        overview = (
+            "Этот рилс адаптирован под русскоязычную съёмку. "
+            "Сверьте оригинал и перевод в каждом блоке, затем утвердите сценарий."
+        )
+
     return {
-        "translation": translation[:2000],
-        "hook": hook,
-        "script": script,
-        "cta": cta,
+        "original_hook": orig_hook,
+        "original_script": orig_script,
+        "original_cta": orig_cta,
+        "hook": hook_ru[:200],
+        "script": script_ru[:2000],
+        "cta": cta_ru[:500],
         "overview": overview,
+        "translation": script_ru[:2000],
     }

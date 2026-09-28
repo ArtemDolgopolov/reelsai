@@ -67,6 +67,9 @@ class ReelDetail(BaseModel):
     hook: str
     script: str
     cta: str
+    original_hook: Optional[str] = None
+    original_script: Optional[str] = None
+    original_cta: Optional[str] = None
     transcript: Optional[str] = None
     speech_pending: bool = False
     analysis_pending: bool = False

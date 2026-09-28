@@ -1322,19 +1322,9 @@ onBeforeUnmount(() => {
                 <span class="eyebrow">{{ remixMode ? 'Remix · адаптация под съёмку' : 'AI-разбор' }}</span>
                 <h1>{{ selectedReel.title }}</h1>
                 <p v-if="remixMode" class="detail-remix-lead">
-                  Оригинал → русский сценарий (хук / скрипт / CTA) → правки → контент-план
+                  Хук → скрипт → призыв · оригинал и перевод · правки → контент-план
                 </p>
               </div>
-              <button
-                v-if="!remixMode"
-                class="ghost-button"
-                type="button"
-                :disabled="remixLoading"
-                @click="startRemix(selectedReel.id)"
-              >
-                <WandSparkles :size="15" />
-                Remix
-              </button>
             </header>
 
             <div class="creator-row">
@@ -1381,14 +1371,75 @@ onBeforeUnmount(() => {
                 {{ saveError }}
               </div>
 
-              <!-- Remix: оригинал | перевод -->
+              <!-- Remix: хук → скрипт → CTA, оригинал | перевод -->
               <template v-if="remixMode">
-                <article class="insight-card bilingual-script-card">
+                <article class="insight-card bilingual-script-card hook-card">
+                  <div class="insight-title">
+                    <span class="insight-icon"><Zap :size="18" fill="currentColor" /></span>
+                    <span>
+                      <strong>Хук</strong>
+                      <small>Оригинал и перевод · редактируйте правую колонку</small>
+                    </span>
+                    <div v-if="editingSection !== 'hook'" class="insight-actions">
+                      <button type="button" @click="copySection('hook')">
+                        <Copy :size="14" />
+                        {{ copiedSection === 'hook' ? 'Скопировано' : 'Копировать' }}
+                      </button>
+                      <button type="button" @click="startEditing('hook')">
+                        <Pencil :size="14" /> Редактировать
+                      </button>
+                    </div>
+                  </div>
+                  <div class="bilingual-grid">
+                    <div class="bilingual-col">
+                      <span class="bilingual-label">Оригинал</span>
+                      <div class="bilingual-pane original-pane compact">
+                        <p v-if="selectedReel.original_hook">{{ selectedReel.original_hook }}</p>
+                        <p v-else class="bilingual-empty">Фрагмент оригинала появится после Remix</p>
+                      </div>
+                    </div>
+                    <div class="bilingual-col">
+                      <span class="bilingual-label">Перевод</span>
+                      <div class="bilingual-pane translation-pane compact">
+                        <textarea
+                          v-if="editingSection === 'hook'"
+                          v-model="draft"
+                          rows="4"
+                          :maxlength="sectionLimits.hook"
+                          autofocus
+                          @keydown.ctrl.enter.prevent="saveSection('hook')"
+                        ></textarea>
+                        <p v-else-if="selectedReel.hook">{{ selectedReel.hook }}</p>
+                        <p v-else class="bilingual-empty">{{ remixLoading ? 'Готовим перевод…' : 'Перевод появится после Remix' }}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div v-if="editingSection === 'hook'" class="editor-actions bilingual-editor-actions">
+                    <span>Ctrl + Enter, чтобы сохранить</span>
+                    <button class="cancel-button" type="button" @click="cancelEditing">
+                      <X :size="14" /> Отмена
+                    </button>
+                    <button
+                      class="save-button"
+                      type="button"
+                      :disabled="saveState === 'saving' || !draft.trim()"
+                      @click="saveSection('hook')"
+                    >
+                      <Save :size="14" />
+                      {{ saveState === 'saving' ? 'Сохраняем...' : 'Сохранить' }}
+                    </button>
+                  </div>
+                  <span class="counter">
+                    {{ editingSection === 'hook' ? draft.length : (selectedReel.hook || '').length }}/{{ sectionLimits.hook }}
+                  </span>
+                </article>
+
+                <article class="insight-card bilingual-script-card script-card">
                   <div class="insight-title">
                     <span class="insight-icon"><FileText :size="18" /></span>
                     <span>
                       <strong>Скрипт</strong>
-                      <small>Оригинал и русский перевод · редактируйте правую колонку</small>
+                      <small>Оригинал и перевод · редактируйте правую колонку</small>
                     </span>
                     <div v-if="editingSection !== 'script'" class="insight-actions">
                       <button type="button" @click="copySection('script')">
@@ -1400,15 +1451,13 @@ onBeforeUnmount(() => {
                       </button>
                     </div>
                   </div>
-
                   <div class="bilingual-grid">
                     <div class="bilingual-col">
                       <span class="bilingual-label">Оригинал</span>
                       <div class="bilingual-pane original-pane">
-                        <p v-if="selectedReel.transcript">{{ selectedReel.transcript }}</p>
-                        <p v-else-if="selectedReel.speech_pending || remixLoading" class="bilingual-empty">
-                          Расшифровываем речь…
-                        </p>
+                        <p v-if="selectedReel.original_script">{{ selectedReel.original_script }}</p>
+                        <p v-else-if="selectedReel.transcript">{{ selectedReel.transcript }}</p>
+                        <p v-else-if="selectedReel.speech_pending || remixLoading" class="bilingual-empty">Расшифровываем речь…</p>
                         <p v-else class="bilingual-empty">Транскрипт пока недоступен</p>
                       </div>
                     </div>
@@ -1424,13 +1473,10 @@ onBeforeUnmount(() => {
                           @keydown.ctrl.enter.prevent="saveSection('script')"
                         ></textarea>
                         <p v-else-if="scriptBody">{{ scriptBody }}</p>
-                        <p v-else class="bilingual-empty">
-                          {{ remixLoading ? 'Готовим перевод…' : 'Перевод появится после Remix' }}
-                        </p>
+                        <p v-else class="bilingual-empty">{{ remixLoading ? 'Готовим перевод…' : 'Перевод появится после Remix' }}</p>
                       </div>
                     </div>
                   </div>
-
                   <div v-if="editingSection === 'script'" class="editor-actions bilingual-editor-actions">
                     <span>Ctrl + Enter, чтобы сохранить</span>
                     <button class="cancel-button" type="button" @click="cancelEditing">
@@ -1451,86 +1497,65 @@ onBeforeUnmount(() => {
                   </span>
                 </article>
 
-                <article class="insight-card hook-card">
-                  <div class="insight-title">
-                    <span class="insight-icon"><Zap :size="18" fill="currentColor" /></span>
-                    <span>
-                      <strong>Хук</strong>
-                      <small>Цепляющий заход на русском</small>
-                    </span>
-                    <div v-if="editingSection !== 'hook'" class="insight-actions">
-                      <button type="button" @click="startEditing('hook')">
-                        <Pencil :size="14" /> Редактировать
-                      </button>
-                    </div>
-                  </div>
-                  <div v-if="editingSection === 'hook'" class="section-editor">
-                    <textarea
-                      v-model="draft"
-                      rows="3"
-                      :maxlength="sectionLimits.hook"
-                      autofocus
-                      @keydown.ctrl.enter.prevent="saveSection('hook')"
-                    ></textarea>
-                    <div class="editor-actions">
-                      <span>Ctrl + Enter, чтобы сохранить</span>
-                      <button class="cancel-button" type="button" @click="cancelEditing">
-                        <X :size="14" /> Отмена
-                      </button>
-                      <button
-                        class="save-button"
-                        type="button"
-                        :disabled="saveState === 'saving' || !draft.trim()"
-                        @click="saveSection('hook')"
-                      >
-                        <Save :size="14" />
-                        {{ saveState === 'saving' ? 'Сохраняем...' : 'Сохранить' }}
-                      </button>
-                    </div>
-                  </div>
-                  <blockquote v-else>«{{ selectedReel.hook || 'Отредактируйте хук под себя' }}»</blockquote>
-                </article>
-
-                <article class="insight-card cta-card">
+                <article class="insight-card bilingual-script-card cta-card">
                   <div class="insight-title">
                     <span class="insight-icon"><Target :size="18" /></span>
                     <span>
                       <strong>Призыв к действию</strong>
-                      <small>Финал на русском</small>
+                      <small>Оригинал и перевод · редактируйте правую колонку</small>
                     </span>
                     <div v-if="editingSection !== 'cta'" class="insight-actions">
+                      <button type="button" @click="copySection('cta')">
+                        <Copy :size="14" />
+                        {{ copiedSection === 'cta' ? 'Скопировано' : 'Копировать' }}
+                      </button>
                       <button type="button" @click="startEditing('cta')">
                         <Pencil :size="14" /> Редактировать
                       </button>
                     </div>
                   </div>
-                  <div v-if="editingSection === 'cta'" class="section-editor">
-                    <textarea
-                      v-model="draft"
-                      rows="3"
-                      :maxlength="sectionLimits.cta"
-                      autofocus
-                      @keydown.ctrl.enter.prevent="saveSection('cta')"
-                    ></textarea>
-                    <div class="editor-actions">
-                      <span>Ctrl + Enter, чтобы сохранить</span>
-                      <button class="cancel-button" type="button" @click="cancelEditing">
-                        <X :size="14" /> Отмена
-                      </button>
-                      <button
-                        class="save-button"
-                        type="button"
-                        :disabled="saveState === 'saving' || !draft.trim()"
-                        @click="saveSection('cta')"
-                      >
-                        <Save :size="14" />
-                        {{ saveState === 'saving' ? 'Сохраняем...' : 'Сохранить' }}
-                      </button>
+                  <div class="bilingual-grid">
+                    <div class="bilingual-col">
+                      <span class="bilingual-label">Оригинал</span>
+                      <div class="bilingual-pane original-pane compact">
+                        <p v-if="selectedReel.original_cta">{{ selectedReel.original_cta }}</p>
+                        <p v-else class="bilingual-empty">Фрагмент оригинала появится после Remix</p>
+                      </div>
+                    </div>
+                    <div class="bilingual-col">
+                      <span class="bilingual-label">Перевод</span>
+                      <div class="bilingual-pane translation-pane compact">
+                        <textarea
+                          v-if="editingSection === 'cta'"
+                          v-model="draft"
+                          rows="4"
+                          :maxlength="sectionLimits.cta"
+                          autofocus
+                          @keydown.ctrl.enter.prevent="saveSection('cta')"
+                        ></textarea>
+                        <p v-else-if="selectedReel.cta">{{ selectedReel.cta }}</p>
+                        <p v-else class="bilingual-empty">{{ remixLoading ? 'Готовим перевод…' : 'Перевод появится после Remix' }}</p>
+                      </div>
                     </div>
                   </div>
-                  <p v-else class="preserve-lines">
-                    {{ selectedReel.cta || 'Сохрани и попробуй этот формат в своём следующем рилсе.' }}
-                  </p>
+                  <div v-if="editingSection === 'cta'" class="editor-actions bilingual-editor-actions">
+                    <span>Ctrl + Enter, чтобы сохранить</span>
+                    <button class="cancel-button" type="button" @click="cancelEditing">
+                      <X :size="14" /> Отмена
+                    </button>
+                    <button
+                      class="save-button"
+                      type="button"
+                      :disabled="saveState === 'saving' || !draft.trim()"
+                      @click="saveSection('cta')"
+                    >
+                      <Save :size="14" />
+                      {{ saveState === 'saving' ? 'Сохраняем...' : 'Сохранить' }}
+                    </button>
+                  </div>
+                  <span class="counter">
+                    {{ editingSection === 'cta' ? draft.length : (selectedReel.cta || '').length }}/{{ sectionLimits.cta }}
+                  </span>
                 </article>
               </template>
 

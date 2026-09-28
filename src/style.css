@@ -1747,6 +1747,11 @@ img {
   color: #0f172a;
 }
 
+.bilingual-pane.compact {
+  min-height: 88px;
+  max-height: 180px;
+}
+
 .bilingual-pane textarea {
   width: 100%;
   min-height: 200px;

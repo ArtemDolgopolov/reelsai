@@ -466,11 +466,12 @@ def schedule_analysis(reel_id: UUID) -> None:
     thread.start()
 
 
-def prepare_russian_remix(reel: Reel, competitor: Competitor) -> tuple[str, str, str, str, bool]:
+def prepare_russian_remix(
+    reel: Reel, competitor: Competitor
+) -> tuple[str, str, str, str, dict[str, str], bool]:
     """
     Force a Russian adaptation: overview + hook/script/cta for filming.
-    Returns overview, hook, script, cta, used_llm.
-    script holds the Russian translation shown opposite the original transcript.
+    Returns overview, hook, script, cta, originals{hook,script,cta}, used_llm.
     """
     from app.services.serializers import format_duration, format_views
 
@@ -482,6 +483,7 @@ def prepare_russian_remix(reel: Reel, competitor: Competitor) -> tuple[str, str,
     caption = continuous_text(reel.caption)
     title = continuous_text(reel.title)
     has_speech = looks_like_real_transcript(spoken)
+    empty_originals = {"hook": "", "script": "", "cta": ""}
 
     source = spoken if has_speech else (caption or title)
     if not source:
@@ -496,7 +498,7 @@ def prepare_russian_remix(reel: Reel, competitor: Competitor) -> tuple[str, str,
             has_speech=False,
             waiting=False,
         )
-        return overview, "", "", DEFAULT_CTA, False
+        return overview, "", "", DEFAULT_CTA, empty_originals, False
 
     bundle = remix_bilingual_bundle(
         transcript=spoken if has_speech else None,
@@ -505,21 +507,23 @@ def prepare_russian_remix(reel: Reel, competitor: Competitor) -> tuple[str, str,
         author=author,
         handle=handle,
     )
-    if bundle and bundle.get("translation"):
-        # Prefer full translation in script so UI can show original | перевод.
-        translation = continuous_text(bundle["translation"])[:2000]
-        hook = continuous_text(bundle.get("hook"))[:200] or translation[:200]
-        script = translation
+    if bundle and bundle.get("hook") and bundle.get("script"):
+        hook = continuous_text(bundle.get("hook"))[:200]
+        script = continuous_text(bundle.get("script"))[:2000]
         cta = continuous_text(bundle.get("cta"))[:500] or DEFAULT_CTA
+        originals = {
+            "hook": continuous_text(bundle.get("original_hook"))[:200],
+            "script": continuous_text(bundle.get("original_script"))[:2000],
+            "cta": continuous_text(bundle.get("original_cta"))[:500],
+        }
         overview_body = (bundle.get("overview") or "").strip()
         overview = (
             f"{build_header(author, handle, duration_label, views_label)}\n\n"
             f"{overview_body}"
         ).strip()
         store_cached_analysis(reel, overview, hook, script, cta, from_llm=True)
-        return overview, hook, script, cta, True
+        return overview, hook, script, cta, originals, True
 
-    # Do not fall back to English transcript chunks — that looks like "no translation".
     overview = offline_overview(
         author=author,
         handle=handle,
@@ -531,9 +535,14 @@ def prepare_russian_remix(reel: Reel, competitor: Competitor) -> tuple[str, str,
         has_speech=has_speech,
         waiting=False,
     )
-    return overview, continuous_text(reel.hook)[:200], continuous_text(reel.script)[:2000], (
-        continuous_text(reel.cta) or DEFAULT_CTA
-    )[:500], False
+    return (
+        overview,
+        continuous_text(reel.hook)[:200],
+        continuous_text(reel.script)[:2000],
+        (continuous_text(reel.cta) or DEFAULT_CTA)[:500],
+        empty_originals,
+        False,
+    )
 
 
 def build_reel_overview(reel: Reel, competitor: Competitor, *, views_label: str, duration_label: str) -> str:

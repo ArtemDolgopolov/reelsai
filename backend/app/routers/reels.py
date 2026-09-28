@@ -115,7 +115,7 @@ def remix_reel(
         ensure_reel_transcript(session, reel, competitor)
         session.refresh(reel)
 
-    overview, hook, script, cta, used_llm = prepare_russian_remix(reel, competitor)
+    overview, hook, script, cta, originals, used_llm = prepare_russian_remix(reel, competitor)
     if not used_llm or not script:
         raise HTTPException(
             status_code=503,
@@ -130,7 +130,19 @@ def remix_reel(
     session.commit()
     session.refresh(reel)
 
-    return reel_to_detail(reel, competitor, session=session)
+    detail = reel_to_detail(reel, competitor, session=session)
+    return detail.model_copy(
+        update={
+            "hook": hook,
+            "script": script,
+            "cta": cta,
+            "original_hook": originals.get("hook") or None,
+            "original_script": originals.get("script") or None,
+            "original_cta": originals.get("cta") or None,
+            "overview": overview or detail.overview,
+            "analysis_pending": False,
+        }
+    )
 
 @router.patch("/{reel_id}", response_model=ReelDetail)
 def update_reel(
