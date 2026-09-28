@@ -98,6 +98,34 @@ def get_reel(
     return detail
 
 
+@router.post("/{reel_id}/refresh-video", response_model=ReelDetail)
+def refresh_reel_video(
+    reel_id: UUID,
+    session: Session = Depends(get_session),
+) -> ReelDetail:
+    """Refresh expired Instagram CDN video_url for in-app playback."""
+    from app.services.instagram_free import InstagramFreeClient
+    from app.services.stt_jobs import _refresh_video_url
+
+    reel = session.get(Reel, reel_id)
+    if reel is None:
+        raise HTTPException(status_code=404, detail="Reel not found")
+    competitor = session.get(Competitor, reel.competitor_id)
+    if competitor is None:
+        raise HTTPException(status_code=404, detail="Competitor not found")
+
+    client = InstagramFreeClient()
+    fresh = _refresh_video_url(client, reel, competitor.username)
+    if fresh and fresh != reel.video_url:
+        reel.video_url = fresh
+        session.add(reel)
+        session.commit()
+        session.refresh(reel)
+    if not reel.video_url:
+        raise HTTPException(status_code=404, detail="Video URL is not available for this reel")
+    return reel_to_detail(reel, competitor, session=session)
+
+
 @router.post("/{reel_id}/remix", response_model=ReelDetail)
 def remix_reel(
     reel_id: UUID,

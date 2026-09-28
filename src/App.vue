@@ -24,6 +24,7 @@ import {
   MessageCircle,
   MoreVertical,
   Pencil,
+  Pause,
   Play,
   Save,
   Search,
@@ -32,6 +33,8 @@ import {
   Timer,
   Trash2,
   Users,
+  Volume2,
+  VolumeX,
   WandSparkles,
   X,
   Zap,
@@ -75,6 +78,12 @@ const remixLoading = ref(false)
 const remixMessage = ref('')
 const selectedReel = ref(null)
 const detailLoading = ref(Boolean(initialRoute.page === 'detail' && initialRoute.reelId))
+const detailVideo = ref(null)
+const videoPlaying = ref(false)
+const videoMuted = ref(true)
+const videoProgressPct = ref(0)
+const videoCurrentLabel = ref('0:00')
+const videoBusy = ref(false)
 const editingSection = ref(null)
 const draft = ref('')
 const saveState = ref('idle')
@@ -253,6 +262,115 @@ function thumbSrc(url) {
   return `/api/media/proxy?url=${encodeURIComponent(url)}`
 }
 
+function videoSrc(url) {
+  if (!url) return ''
+  if (url.startsWith('/api/media/video')) return url
+  return `/api/media/video?url=${encodeURIComponent(url)}`
+}
+
+const playbackSrc = computed(() => videoSrc(selectedReel.value?.video_url || ''))
+
+function formatClock(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0))
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
+function resetVideoUi() {
+  videoPlaying.value = false
+  videoProgressPct.value = 0
+  videoCurrentLabel.value = '0:00'
+  videoBusy.value = false
+  const el = detailVideo.value
+  if (el) {
+    try {
+      el.pause()
+      el.currentTime = 0
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function onVideoTimeUpdate() {
+  const el = detailVideo.value
+  if (!el || !el.duration) return
+  videoProgressPct.value = Math.min(100, (el.currentTime / el.duration) * 100)
+  videoCurrentLabel.value = formatClock(el.currentTime)
+}
+
+function onVideoPlay() {
+  videoPlaying.value = true
+}
+
+function onVideoPause() {
+  videoPlaying.value = false
+}
+
+async function refreshPlaybackUrl() {
+  const reelId = selectedReel.value?.id
+  if (!reelId) return false
+  try {
+    const response = await fetch(`/api/reels/${reelId}/refresh-video`, { method: 'POST' })
+    if (!response.ok) return false
+    const body = await response.json()
+    if (selectedReel.value?.id === reelId) {
+      selectedReel.value = { ...selectedReel.value, ...body }
+    }
+    return Boolean(body.video_url)
+  } catch {
+    return false
+  }
+}
+
+async function toggleVideoPlayback() {
+  if (videoBusy.value) return
+  videoBusy.value = true
+  try {
+    if (!selectedReel.value?.video_url) {
+      const ok = await refreshPlaybackUrl()
+      if (!ok) {
+        saveError.value = 'Видео пока недоступно — попробуйте чуть позже'
+        return
+      }
+      await new Promise((r) => setTimeout(r, 50))
+    }
+    const el = detailVideo.value
+    if (!el) return
+    if (el.paused) {
+      el.muted = videoMuted.value
+      try {
+        await el.play()
+      } catch {
+        const ok = await refreshPlaybackUrl()
+        if (!ok) {
+          saveError.value = 'Не удалось воспроизвести видео'
+          return
+        }
+        await new Promise((r) => setTimeout(r, 80))
+        const retry = detailVideo.value
+        if (retry) {
+          retry.muted = videoMuted.value
+          await retry.play().catch(() => {
+            saveError.value = 'Не удалось воспроизвести видео'
+          })
+        }
+      }
+    } else {
+      el.pause()
+    }
+  } finally {
+    videoBusy.value = false
+  }
+}
+
+function toggleVideoMute() {
+  videoMuted.value = !videoMuted.value
+  const el = detailVideo.value
+  if (el) el.muted = videoMuted.value
+}
+
 function posterLine(reel) {
   const raw = (reel?.overlay_text || reel?.title || '').replace(/\s+/g, ' ').trim()
   if (!raw) return ''
@@ -277,6 +395,7 @@ function navigate(page, id = null) {
   }
   if (page === 'home') {
     stopSpeechPolling()
+    resetVideoUi()
     selectedReel.value = null
     editingSection.value = null
     selectedCompetitorId.value = null
@@ -285,6 +404,7 @@ function navigate(page, id = null) {
   }
   if (page === 'plan') {
     stopSpeechPolling()
+    resetVideoUi()
     selectedReel.value = null
     editingSection.value = null
     selectedCompetitorId.value = null
@@ -390,6 +510,7 @@ async function openReel(reelId, { syncHash = true, remix = false } = {}) {
   copiedSection.value = ''
   remixMode.value = remix
   remixMessage.value = ''
+  resetVideoUi()
   stopSpeechPolling()
   analysisRevealKey.value += 1
   if (syncHash) {
@@ -406,6 +527,10 @@ async function openReel(reelId, { syncHash = true, remix = false } = {}) {
       startSpeechPolling(reelId)
     } else {
       analysisRevealKey.value += 1
+    }
+    // Soft-refresh CDN video in background when missing.
+    if (!selectedReel.value?.video_url) {
+      void refreshPlaybackUrl()
     }
   } catch (error) {
     saveError.value = error.message
@@ -1286,23 +1411,55 @@ onBeforeUnmount(() => {
 
         <div v-else class="detail-layout">
           <div class="video-column">
-            <div class="featured-video">
+            <div class="featured-video" :class="{ playing: videoPlaying, 'thumb-missing': !selectedReel.thumbnail_url }">
+              <video
+                v-if="playbackSrc"
+                ref="detailVideo"
+                class="detail-player"
+                :src="playbackSrc"
+                :poster="selectedReel.thumbnail_url ? thumbSrc(selectedReel.thumbnail_url) : undefined"
+                playsinline
+                loop
+                preload="metadata"
+                @timeupdate="onVideoTimeUpdate"
+                @play="onVideoPlay"
+                @pause="onVideoPause"
+                @click="toggleVideoPlayback"
+              ></video>
               <img
-                v-if="selectedReel.thumbnail_url"
+                v-else-if="selectedReel.thumbnail_url"
                 :src="thumbSrc(selectedReel.thumbnail_url)"
                 :alt="selectedReel.title"
                 referrerpolicy="no-referrer"
                 @error="onThumbError"
               />
-              <span class="poster-shade"></span>
-              <span class="poster-hook">{{ posterLine(selectedReel) }}</span>
-              <button type="button" aria-label="Воспроизвести видео">
-                <Play :size="24" fill="currentColor" />
+              <span v-if="!videoPlaying" class="poster-shade"></span>
+              <span v-if="!videoPlaying" class="poster-hook">{{ posterLine(selectedReel) }}</span>
+              <button
+                v-if="!videoPlaying"
+                type="button"
+                class="video-play-btn"
+                aria-label="Воспроизвести видео"
+                :disabled="videoBusy"
+                @click="toggleVideoPlayback"
+              >
+                <LoaderCircle v-if="videoBusy" :size="22" class="spin" />
+                <Play v-else :size="24" fill="currentColor" />
               </button>
-              <span class="video-progress"><i></i></span>
-              <span class="video-time">0:00 / {{ selectedDurationLabel }}</span>
+              <button
+                v-if="videoPlaying || playbackSrc"
+                type="button"
+                class="video-mute-btn"
+                :aria-label="videoMuted ? 'Включить звук' : 'Выключить звук'"
+                @click.stop="toggleVideoMute"
+              >
+                <VolumeX v-if="videoMuted" :size="16" />
+                <Volume2 v-else :size="16" />
+              </button>
+              <span class="video-progress"><i :style="{ width: `${videoProgressPct}%` }"></i></span>
+              <span class="video-time">{{ videoCurrentLabel }} / {{ selectedDurationLabel }}</span>
             </div>
-            <div class="video-actions">
+            <div class="video-actions single">
               <button
                 v-if="remixMode"
                 class="primary-button wide"
@@ -1323,16 +1480,6 @@ onBeforeUnmount(() => {
                 <WandSparkles :size="17" />
                 {{ remixLoading ? 'Готовим Remix…' : 'Сделать Remix' }}
               </button>
-              <a
-                v-if="selectedReel.instagram_url"
-                class="icon-button"
-                :href="selectedReel.instagram_url"
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Открыть оригинал"
-              >
-                <ExternalLink :size="18" />
-              </a>
             </div>
           </div>
 
