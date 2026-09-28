@@ -43,7 +43,7 @@ import LandingPage from './components/marketing/LandingPage.vue'
 import LoginPage from './components/marketing/LoginPage.vue'
 import RegisterPage from './components/marketing/RegisterPage.vue'
 import VerifyOtpPage from './components/marketing/VerifyOtpPage.vue'
-import { claimOauthTicket, fetchMe, logoutAccount } from './authApi.js'
+import { claimOauthTicket, clearChallenge, fetchMe, logoutAccount } from './authApi.js'
 
 const marketingPages = ['landing', 'login', 'register', 'verify-otp']
 const appPages = ['home', 'plan', 'competitors', 'detail']
@@ -467,8 +467,9 @@ async function bootstrapAuth() {
   authBooting.value = true
   try {
     const me = await fetchMe()
-    currentUser.value = me
-    if (!me && appPages.includes(currentPage.value)) {
+    if (me) {
+      currentUser.value = me
+    } else if (!currentUser.value && appPages.includes(currentPage.value)) {
       currentPage.value = 'login'
       if (window.location.hash.replace(/^#/, '') !== 'login') {
         window.location.hash = 'login'
@@ -1057,6 +1058,7 @@ onMounted(async () => {
     try {
       const claimed = await claimOauthTicket(oauthTicket)
       currentUser.value = claimed.user
+      clearChallenge()
     } catch (err) {
       try {
         sessionStorage.setItem(
