@@ -1322,7 +1322,7 @@ onBeforeUnmount(() => {
                 <span class="eyebrow">{{ remixMode ? 'Remix · адаптация под съёмку' : 'AI-разбор' }}</span>
                 <h1>{{ selectedReel.title }}</h1>
                 <p v-if="remixMode" class="detail-remix-lead">
-                  Хук → скрипт → призыв · оригинал и перевод · правки → контент-план
+                  Hook → Script → CTA · оригинал и перевод · правки → контент-план
                 </p>
               </div>
             </header>
@@ -1371,13 +1371,13 @@ onBeforeUnmount(() => {
                 {{ saveError }}
               </div>
 
-              <!-- Remix: хук → скрипт → CTA, оригинал | перевод -->
+              <!-- Remix: Hook → Script → CTA, оригинал | перевод (1:1) -->
               <template v-if="remixMode">
                 <article class="insight-card bilingual-script-card hook-card">
                   <div class="insight-title">
                     <span class="insight-icon"><Zap :size="18" fill="currentColor" /></span>
                     <span>
-                      <strong>Хук</strong>
+                      <strong>Hook</strong>
                       <small>Оригинал и перевод · редактируйте правую колонку</small>
                     </span>
                     <div v-if="editingSection !== 'hook'" class="insight-actions">
@@ -1395,7 +1395,8 @@ onBeforeUnmount(() => {
                       <span class="bilingual-label">Оригинал</span>
                       <div class="bilingual-pane original-pane compact">
                         <p v-if="selectedReel.original_hook">{{ selectedReel.original_hook }}</p>
-                        <p v-else class="bilingual-empty">Фрагмент оригинала появится после Remix</p>
+                        <p v-else-if="selectedReel.speech_pending || remixLoading" class="bilingual-empty">Расшифровываем речь…</p>
+                        <p v-else class="bilingual-empty">Нет текста для хука</p>
                       </div>
                     </div>
                     <div class="bilingual-col">
@@ -1438,7 +1439,7 @@ onBeforeUnmount(() => {
                   <div class="insight-title">
                     <span class="insight-icon"><FileText :size="18" /></span>
                     <span>
-                      <strong>Скрипт</strong>
+                      <strong>Script</strong>
                       <small>Оригинал и перевод · редактируйте правую колонку</small>
                     </span>
                     <div v-if="editingSection !== 'script'" class="insight-actions">
@@ -1456,9 +1457,8 @@ onBeforeUnmount(() => {
                       <span class="bilingual-label">Оригинал</span>
                       <div class="bilingual-pane original-pane">
                         <p v-if="selectedReel.original_script">{{ selectedReel.original_script }}</p>
-                        <p v-else-if="selectedReel.transcript">{{ selectedReel.transcript }}</p>
                         <p v-else-if="selectedReel.speech_pending || remixLoading" class="bilingual-empty">Расшифровываем речь…</p>
-                        <p v-else class="bilingual-empty">Транскрипт пока недоступен</p>
+                        <p v-else class="bilingual-empty">Нет текста для скрипта</p>
                       </div>
                     </div>
                     <div class="bilingual-col">
@@ -1501,7 +1501,7 @@ onBeforeUnmount(() => {
                   <div class="insight-title">
                     <span class="insight-icon"><Target :size="18" /></span>
                     <span>
-                      <strong>Призыв к действию</strong>
+                      <strong>Call to Action</strong>
                       <small>Оригинал и перевод · редактируйте правую колонку</small>
                     </span>
                     <div v-if="editingSection !== 'cta'" class="insight-actions">
@@ -1519,7 +1519,8 @@ onBeforeUnmount(() => {
                       <span class="bilingual-label">Оригинал</span>
                       <div class="bilingual-pane original-pane compact">
                         <p v-if="selectedReel.original_cta">{{ selectedReel.original_cta }}</p>
-                        <p v-else class="bilingual-empty">Фрагмент оригинала появится после Remix</p>
+                        <p v-else-if="selectedReel.speech_pending || remixLoading" class="bilingual-empty">Расшифровываем речь…</p>
+                        <p v-else class="bilingual-empty">В оригинале нет явного CTA</p>
                       </div>
                     </div>
                     <div class="bilingual-col">
@@ -1560,27 +1561,6 @@ onBeforeUnmount(() => {
               </template>
 
               <template v-else>
-              <section v-if="selectedReel.transcript" class="original-transcript-card">
-                <div class="insight-title">
-                  <span class="insight-icon"><FileText :size="15" /></span>
-                  <div>
-                    <strong>Оригинал · транскрипт</strong>
-                    <small>Что говорит автор в исходном ролике</small>
-                  </div>
-                </div>
-                <p class="original-transcript-text">{{ selectedReel.transcript }}</p>
-              </section>
-
-              <section v-else-if="selectedReel.speech_pending" class="original-transcript-card">
-                <div class="insight-title">
-                  <span class="insight-icon"><LoaderCircle :size="15" class="spin" /></span>
-                  <div>
-                    <strong>Оригинал · транскрипт</strong>
-                    <small>Расшифровываем речь автора…</small>
-                  </div>
-                </div>
-              </section>
-
               <Transition name="analysis-fade" mode="out-in">
                 <div
                   v-if="isAnalysisLoading"
@@ -1660,8 +1640,8 @@ onBeforeUnmount(() => {
                     <div class="ai-chat-head">
                       <span class="ai-avatar"><Sparkles :size="16" /></span>
                       <div>
-                        <strong>{{ remixMode ? 'Remix AI' : 'Reels AI' }}</strong>
-                        <small>{{ remixMode ? 'Русская адаптация сценария' : 'Про что ролик' }}</small>
+                        <strong>Reels AI</strong>
+                        <small>Про что ролик</small>
                       </div>
                       <span v-if="isOverviewLoading" class="ai-status ai-status-live">
                         <LoaderCircle :size="13" class="spin" />
@@ -1682,8 +1662,8 @@ onBeforeUnmount(() => {
                     <div class="insight-title">
                       <span class="insight-icon"><Zap :size="18" fill="currentColor" /></span>
                       <span>
-                        <strong>{{ remixMode ? 'Хук (RU)' : 'Hook' }}</strong>
-                        <small>{{ remixMode ? 'Русский цепляющий заход для вашей съёмки' : 'Первые секунды — стоп-скролл.' }}</small>
+                        <strong>Hook</strong>
+                        <small>Первые секунды — стоп-скролл.</small>
                       </span>
                       <div v-if="editingSection !== 'hook'" class="insight-actions">
                         <button type="button" @click="copySection('hook')">
@@ -1719,7 +1699,7 @@ onBeforeUnmount(() => {
                         </button>
                       </div>
                     </div>
-                    <blockquote v-else>«{{ selectedReel.hook || (remixMode ? 'Отредактируйте хук под себя' : 'Добавь hook вручную') }}»</blockquote>
+                    <blockquote v-else>«{{ selectedReel.hook || 'Добавь hook вручную' }}»</blockquote>
                     <span class="counter">
                       {{ editingSection === 'hook' ? draft.length : (selectedReel.hook || '').length }}/{{ sectionLimits.hook }}
                     </span>
@@ -1729,8 +1709,8 @@ onBeforeUnmount(() => {
                     <div class="insight-title">
                       <span class="insight-icon"><FileText :size="18" /></span>
                       <span>
-                        <strong>{{ remixMode ? 'Сценарий (RU)' : 'Script' }}</strong>
-                        <small>{{ remixMode ? 'Основной текст на русском — правьте под свой контент' : 'Структура и ключевые тезисы.' }}</small>
+                        <strong>Script</strong>
+                        <small>Структура и ключевые тезисы.</small>
                       </span>
                       <div v-if="editingSection !== 'script'" class="insight-actions">
                         <button type="button" @click="copySection('script')">
@@ -1767,7 +1747,7 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
                     <p v-if="scriptBody" class="script-prose">{{ scriptBody }}</p>
-                    <p v-else class="preserve-lines">{{ remixMode ? 'Отредактируйте сценарий под свой контент' : 'Добавь скрипт вручную' }}</p>
+                    <p v-else class="preserve-lines">Добавь скрипт вручную</p>
                     <span class="counter">
                       {{ editingSection === 'script' ? draft.length : scriptBody.length }}/{{ sectionLimits.script }}
                     </span>
@@ -1777,8 +1757,8 @@ onBeforeUnmount(() => {
                     <div class="insight-title">
                       <span class="insight-icon"><Target :size="18" /></span>
                       <span>
-                        <strong>{{ remixMode ? 'Призыв к действию (RU)' : 'Call to Action' }}</strong>
-                        <small>{{ remixMode ? 'Финал на русском — комментарий, подписка, сохранение' : 'Призыв в финале ролика.' }}</small>
+                        <strong>Call to Action</strong>
+                        <small>Призыв в финале ролика.</small>
                       </span>
                       <div v-if="editingSection !== 'cta'" class="insight-actions">
                         <button type="button" @click="copySection('cta')">

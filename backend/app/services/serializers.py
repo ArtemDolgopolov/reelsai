@@ -113,6 +113,23 @@ def reel_to_detail(
             analysis_pending = False
 
     speech_pending = reel.transcript is None
+
+    # Always derive original section texts from the transcript so Remix left
+    # columns stay filled and stay aligned with the same split rules as remix.
+    original_hook = ""
+    original_script = ""
+    original_cta = ""
+    spoken = continuous_text(reel.transcript)
+    if looks_like_real_transcript(spoken):
+        from app.services.transcript_sections import split_transcript_into_sections
+
+        oh, os_, oc = split_transcript_into_sections(spoken, reel.caption, use_llm=False)
+        original_hook = continuous_text(oh)[:200]
+        original_script = continuous_text(os_)[:2000]
+        original_cta = continuous_text(oc)[:500]
+        if original_cta == DEFAULT_CTA:
+            original_cta = ""
+
     return ReelDetail(
         id=reel.id,
         competitor_id=reel.competitor_id,
@@ -135,6 +152,9 @@ def reel_to_detail(
         hook=hook,
         script=continuous_text(script),
         cta=continuous_text(cta) or DEFAULT_CTA,
+        original_hook=original_hook or None,
+        original_script=original_script or None,
+        original_cta=original_cta or None,
         transcript=reel.transcript,
         speech_pending=speech_pending,
         analysis_pending=analysis_pending,

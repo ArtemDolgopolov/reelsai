@@ -390,7 +390,8 @@ def remix_bilingual_bundle(
     handle: str = "",
 ) -> dict[str, str] | None:
     """
-    Build Remix payload with original + Russian for hook / script / cta.
+    Split original into hook/script/cta, then translate EACH piece 1:1.
+    Original boundaries are fixed (heuristic) — LLM never invents different originals.
     """
     from app.services.transcript_sections import DEFAULT_CTA, continuous_text, split_transcript_into_sections
 
@@ -399,7 +400,6 @@ def remix_bilingual_bundle(
     if not source:
         return None
 
-    # Heuristic split of the original speech — always available for left columns.
     orig_hook, orig_script, orig_cta = split_transcript_into_sections(
         spoken if spoken else None,
         caption or title,
@@ -407,30 +407,38 @@ def remix_bilingual_bundle(
     )
     orig_hook = continuous_text(orig_hook)[:200]
     orig_script = continuous_text(orig_script)[:2000]
-    orig_cta = continuous_text(orig_cta)[:500] or DEFAULT_CTA
+    orig_cta = continuous_text(orig_cta)[:500]
+    # If CTA is just the default placeholder (no real closing line), leave original empty.
+    cta_is_real = bool(orig_cta) and orig_cta != DEFAULT_CTA and _latin_share(orig_cta) > 0.2
+    if not cta_is_real:
+        orig_cta = ""
 
+    def _translate_piece(text: str, *, limit: int) -> str | None:
+        if not text.strip():
+            return None
+        return translate_transcript_to_russian(text, allow_wait=True)
+
+    # Prefer one structured call that translates the FIXED original pieces (no re-split).
     system = (
-        "Ты сценарист и переводчик вертикальных Reels. "
-        "Разбей оригинал на hook / script / cta и переведи каждый блок на русский. "
-        "Верни ТОЛЬКО JSON с ключами: "
-        "hook_original, hook_ru, script_original, script_ru, cta_original, cta_ru, overview. "
-        "hook_original / script_original / cta_original — фрагменты ИСХОДНОГО текста "
-        "(не выдумывай; бери из расшифровки). "
-        "hook_ru / script_ru / cta_ru — естественный русский перевод тех же блоков "
-        "для съёмки (не машинный дословный калек). "
-        "hook — 1–2 предложения, script — основной текст абзацем, cta — короткий призыв. "
+        "Ты переводчик Reels. Ниже даны три готовых фрагмента оригинала: hook, script, cta. "
+        "Переведи каждый на русский, сохраняя смысл и разговорный стиль. "
+        "Не меняй границы фрагментов и не добавляй новый смысл. "
+        "Верни ТОЛЬКО JSON с ключами hook_ru, script_ru, cta_ru, overview. "
         "overview — 2 коротких абзаца по-русски: о чём ролик. "
-        "Не оставляй английский в *_ru полях."
+        "В hook_ru / script_ru / cta_ru не оставляй английский."
     )
-    user = (
-        (f"Автор: {author} ({handle})\n" if author or handle else "")
-        + f"Расшифровка речи:\n{source[:1800]}"
-    )
+    user_parts = [f"HOOK:\n{orig_hook}", f"SCRIPT:\n{orig_script}"]
+    if orig_cta:
+        user_parts.append(f"CTA:\n{orig_cta}")
+    else:
+        user_parts.append("CTA:\n(нет явного призыва — сформулируй короткий уместный cta_ru на русском)")
+    if author or handle:
+        user_parts.insert(0, f"Автор: {author} ({handle})")
     raw = groq_chat(
         system=system,
-        user=user,
-        temperature=0.15,
-        max_tokens=1100,
+        user="\n\n".join(user_parts),
+        temperature=0.1,
+        max_tokens=1000,
         allow_wait=True,
     )
 
@@ -440,16 +448,6 @@ def remix_bilingual_bundle(
     overview = ""
     if raw:
         data = _extract_json_object(raw) or {}
-        maybe_oh = _clean_prose(data.get("hook_original"), 200)
-        maybe_os = _clean_prose(data.get("script_original"), 2000)
-        maybe_oc = _clean_prose(data.get("cta_original"), 500)
-        if maybe_oh:
-            orig_hook = maybe_oh
-        if maybe_os:
-            orig_script = maybe_os
-        if maybe_oc:
-            orig_cta = maybe_oc
-
         maybe_hook = _clean_prose(data.get("hook_ru"), 200)
         maybe_script = _clean_prose(data.get("script_ru"), 2000)
         maybe_cta = _clean_prose(data.get("cta_ru"), 500)
@@ -463,29 +461,32 @@ def remix_bilingual_bundle(
         if maybe_overview and _latin_share(maybe_overview) < 0.45:
             overview = maybe_overview[:1600]
 
-    # Fallback: translate each original block separately if JSON pass failed.
-    if not hook_ru or not script_ru:
-        full_ru = translate_transcript_to_russian(source, allow_wait=True)
-        if full_ru:
-            if not hook_ru:
-                piece = translate_transcript_to_russian(orig_hook, allow_wait=True) if orig_hook else None
-                hook_ru = (piece or full_ru)[:200]
-            if not script_ru:
-                piece = translate_transcript_to_russian(orig_script, allow_wait=True) if orig_script else None
-                script_ru = (piece or full_ru)[:2000]
-            if not cta_ru:
-                piece = translate_transcript_to_russian(orig_cta, allow_wait=True) if orig_cta else None
-                cta_ru = (piece or DEFAULT_CTA)[:500]
+    # Strict 1:1 fallback — translate each fixed original piece on its own.
+    if not hook_ru and orig_hook:
+        hook_ru = (_translate_piece(orig_hook, limit=200) or "")[:200]
+    if not script_ru and orig_script:
+        script_ru = (_translate_piece(orig_script, limit=2000) or "")[:2000]
+    if not cta_ru:
+        if orig_cta:
+            cta_ru = (_translate_piece(orig_cta, limit=500) or DEFAULT_CTA)[:500]
+        else:
+            cta_ru = DEFAULT_CTA
 
     if not hook_ru or not script_ru:
         return None
-
-    if not cta_ru:
-        cta_ru = DEFAULT_CTA
     if not overview:
-        overview = (
+        overview = explain_reel_in_russian(
+            author=author or "Автор",
+            handle=handle or "",
+            duration_label="",
+            views_label="",
+            transcript=spoken or None,
+            caption=caption,
+            title=title,
+            allow_wait=True,
+        ) or (
             "Этот рилс адаптирован под русскоязычную съёмку. "
-            "Сверьте оригинал и перевод в каждом блоке, затем утвердите сценарий."
+            "Сверьте оригинал и перевод в каждом блоке."
         )
 
     return {
@@ -494,7 +495,7 @@ def remix_bilingual_bundle(
         "original_cta": orig_cta,
         "hook": hook_ru[:200],
         "script": script_ru[:2000],
-        "cta": cta_ru[:500],
-        "overview": overview,
+        "cta": (cta_ru or DEFAULT_CTA)[:500],
+        "overview": overview[:1600],
         "translation": script_ru[:2000],
     }
