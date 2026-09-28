@@ -1,16 +1,32 @@
 <script setup>
 import { ref } from 'vue'
-import { ArrowRight, Eye, EyeOff, Lock, Mail, Zap } from '@lucide/vue'
+import { ArrowRight, Eye, EyeOff, LoaderCircle, Lock, Mail, Zap } from '@lucide/vue'
+import { loginAccount, saveChallenge } from '../../authApi.js'
 
-const emit = defineEmits(['navigate', 'enter'])
+const emit = defineEmits(['navigate'])
 
 const email = ref('')
 const password = ref('')
 const remember = ref(true)
 const showPassword = ref(false)
+const busy = ref(false)
+const error = ref('')
 
-function onSubmit() {
-  emit('enter')
+async function onSubmit() {
+  busy.value = true
+  error.value = ''
+  try {
+    const challenge = await loginAccount({
+      email: email.value.trim(),
+      password: password.value,
+    })
+    saveChallenge(challenge)
+    emit('navigate', 'verify-otp')
+  } catch (err) {
+    error.value = err.message || 'Не удалось войти'
+  } finally {
+    busy.value = false
+  }
 }
 </script>
 
@@ -80,43 +96,20 @@ function onSubmit() {
         <button class="mkt-link" type="button">Забыли пароль?</button>
       </div>
 
-      <button class="mkt-btn mkt-btn-primary mkt-btn-lg" type="submit">
-        Войти
-        <ArrowRight :size="18" />
+      <p v-if="error" class="mkt-auth-foot" style="color: #be123c; margin-bottom: 12px">{{ error }}</p>
+
+      <button class="mkt-btn mkt-btn-primary mkt-btn-lg" type="submit" :disabled="busy">
+        <LoaderCircle v-if="busy" :size="18" class="spin" />
+        <template v-else>
+          Войти
+          <ArrowRight :size="18" />
+        </template>
       </button>
 
       <div class="mkt-divider">или войти через</div>
       <div class="mkt-social">
-        <button type="button" @click="onSubmit">
-          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              fill="#EA4335"
-              d="M12 10.2v3.6h5.1c-.2 1.2-.9 2.3-1.9 3l3.1 2.4c1.8-1.7 2.9-4.1 2.9-7 0-.7-.1-1.3-.2-1.9H12z"
-            />
-            <path
-              fill="#34A853"
-              d="M6.6 14.3l-.7.5-2.4 1.9C5.1 19.3 8.3 21.2 12 21.2c2.2 0 4.1-.7 5.5-2l-3.1-2.4c-.8.5-1.9.9-3 .9-2.3 0-4.2-1.5-4.9-3.6z"
-            />
-            <path
-              fill="#4A90E2"
-              d="M3.5 7.3C2.9 8.5 2.5 9.9 2.5 11.4s.4 2.9 1 4.1l3.1-2.4c-.2-.5-.3-1.1-.3-1.7s.1-1.2.3-1.7L3.5 7.3z"
-            />
-            <path
-              fill="#FBBC05"
-              d="M12 5.8c1.2 0 2.3.4 3.2 1.2l2.4-2.4C16.1 3.2 14.2 2.4 12 2.4 8.3 2.4 5.1 4.3 3.5 7.3l3.1 2.4C7.3 7.6 9.3 5.8 12 5.8z"
-            />
-          </svg>
-          Google
-        </button>
-        <button type="button" @click="onSubmit">
-          <svg width="14" height="16" viewBox="0 0 14 17" aria-hidden="true">
-            <path
-              fill="currentColor"
-              d="M13.2 5.8c-.1 0-1.5-.9-2.5-.9-1.2 0-2.2.7-2.8.7-.6 0-1.5-.7-2.5-.7C3.5 4.9 2 6.1 2 8.5c0 1.6.6 3.3 1.4 4.4.6.8 1.2 1.5 2 1.5.8 0 1.1-.5 2.1-.5s1.3.5 2.1.5c.9 0 1.4-.7 2-.1.3.1 1.1-1.3 1.1-1.3s-1.9-.8-1.9-3.1c0-2 1.6-2.9 1.6-2.9s-1.1-1.7-2.2-1.8zM8.7 3.5c.5-.6.9-1.5.8-2.4-.8.1-1.7.5-2.3 1.2-.5.5-.9 1.4-.8 2.2.9.1 1.7-.4 2.3-1z"
-            />
-          </svg>
-          Apple
-        </button>
+        <button type="button" disabled title="Скоро — фаза 2">Google</button>
+        <button type="button" disabled title="Скоро — фаза 2">Яндекс</button>
       </div>
 
       <p class="mkt-auth-foot">

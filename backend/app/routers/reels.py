@@ -5,6 +5,7 @@ from sqlmodel import Session, col, select
 
 from app.config import get_settings
 from app.db import get_session
+from app.deps import get_current_user
 from app.models import Competitor, ContentPlanItem, Reel
 from app.schemas import ReelDetail, ReelListItem, ReelUpdateRequest
 from app.services.instagram_free import looks_like_real_transcript
@@ -13,7 +14,12 @@ from app.services.groq_llm import last_groq_failure
 from app.services.serializers import reel_to_detail, reel_to_list_item
 from app.services.stt_jobs import ensure_reel_transcript, schedule_transcripts
 from app.services.transcript_sections import DEFAULT_CTA
-router = APIRouter(prefix="/reels", tags=["reels"])
+
+router = APIRouter(
+    prefix="/reels",
+    tags=["reels"],
+    dependencies=[Depends(get_current_user)],
+)
 
 SECTION_LIMITS = {
     "hook": 200,

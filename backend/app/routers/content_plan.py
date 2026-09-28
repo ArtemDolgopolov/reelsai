@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, col, select
 
 from app.db import get_session
+from app.deps import get_current_user
 from app.models import Competitor, ContentPlanItem, Reel, ShootStatus
 from app.schemas import (
     ContentPlanCreateRequest,
@@ -13,7 +14,11 @@ from app.schemas import (
 )
 from app.services.serializers import format_duration
 
-router = APIRouter(prefix="/content-plan", tags=["content-plan"])
+router = APIRouter(
+    prefix="/content-plan",
+    tags=["content-plan"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 def _to_read(item: ContentPlanItem, reel: Reel, username: str) -> ContentPlanItemRead:

@@ -8,7 +8,7 @@ from sqlmodel import Session
 
 from app.config import get_settings
 from app.db import engine
-from app.routers import competitors, content_plan, health, media, reels
+from app.routers import auth, competitors, content_plan, health, media, reels
 from app.routers.competitors import backfill_missing_transcripts
 from app.services.seed import ensure_seed_data
 
@@ -43,6 +43,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router, prefix="/api")
+app.include_router(auth.router, prefix="/api")
 app.include_router(competitors.router, prefix="/api")
 app.include_router(content_plan.router, prefix="/api")
 app.include_router(reels.router, prefix="/api")

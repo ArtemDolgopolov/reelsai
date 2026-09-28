@@ -5,10 +5,16 @@ from __future__ import annotations
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
-router = APIRouter(prefix="/media", tags=["media"])
+from app.deps import get_current_user
+
+router = APIRouter(
+    prefix="/media",
+    tags=["media"],
+    dependencies=[Depends(get_current_user)],
+)
 
 ALLOWED_HOST_MARKERS = (
     "cdninstagram.com",

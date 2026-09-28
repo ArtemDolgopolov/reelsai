@@ -119,6 +119,8 @@ img {
   display: grid;
   gap: 7px;
   margin-top: 31px;
+  flex: 1;
+  align-content: start;
 }
 
 .nav-item {

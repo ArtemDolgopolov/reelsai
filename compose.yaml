@@ -30,6 +30,12 @@ services:
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       WHISPER_MODEL: ${WHISPER_MODEL:-base}
       GROQ_WHISPER_MODEL: ${GROQ_WHISPER_MODEL:-whisper-large-v3}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-change-me-in-production-reelsai-auth-secret}
+      AUTH_OTP_PEPPER: ${AUTH_OTP_PEPPER:-change-me-otp-pepper}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      AUTH_DEV_EXPOSE_OTP: ${AUTH_DEV_EXPOSE_OTP:-true}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-AI Рилс Продюсер <onboarding@resend.dev>}
 
   web:
     build:

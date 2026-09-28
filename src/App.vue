@@ -42,32 +42,25 @@ import {
 import LandingPage from './components/marketing/LandingPage.vue'
 import LoginPage from './components/marketing/LoginPage.vue'
 import RegisterPage from './components/marketing/RegisterPage.vue'
+import VerifyOtpPage from './components/marketing/VerifyOtpPage.vue'
+import { fetchMe, logoutAccount } from './authApi.js'
 
-const marketingPages = ['landing', 'login', 'register']
+const marketingPages = ['landing', 'login', 'register', 'verify-otp']
 const appPages = ['home', 'plan', 'competitors', 'detail']
 const pages = [...marketingPages, ...appPages]
-const AUTH_KEY = 'reelsai_authed'
-
-function readAuthed() {
-  try {
-    return window.localStorage.getItem(AUTH_KEY) === '1'
-  } catch {
-    return false
-  }
-}
 
 function parseLocationHash() {
   const raw = window.location.hash.replace(/^#/, '').trim()
   if (!raw) {
     return {
-      page: readAuthed() ? 'home' : 'landing',
+      page: 'landing',
       reelId: null,
       competitorId: null,
     }
   }
   const [pagePart, ...rest] = raw.split('/')
   let page = pages.includes(pagePart) ? pagePart : null
-  if (!page) page = readAuthed() ? 'home' : 'landing'
+  if (!page) page = 'landing'
   const reelId = page === 'detail' && rest[0] ? rest[0] : null
   const competitorId = page === 'competitors' && rest[0] ? rest[0] : null
   return { page, reelId, competitorId }
@@ -75,7 +68,8 @@ function parseLocationHash() {
 
 const initialRoute = parseLocationHash()
 const currentPage = ref(initialRoute.page)
-const isAuthed = ref(readAuthed())
+const currentUser = ref(null)
+const authBooting = ref(true)
 const searchQuery = ref('')
 const competitorHandle = ref('')
 const competitorsList = ref([])
@@ -458,17 +452,42 @@ function onThumbError(event) {
   if (poster) poster.classList.add('thumb-missing')
 }
 
-function enterApp() {
+async function bootstrapAuth() {
+  authBooting.value = true
   try {
-    window.localStorage.setItem(AUTH_KEY, '1')
-  } catch {
-    // ignore
+    const me = await fetchMe()
+    currentUser.value = me
+    if (!me && appPages.includes(currentPage.value)) {
+      currentPage.value = 'login'
+      if (window.location.hash.replace(/^#/, '') !== 'login') {
+        window.location.hash = 'login'
+      }
+    }
+  } finally {
+    authBooting.value = false
   }
-  isAuthed.value = true
+}
+
+async function onAuthEntered() {
+  const me = await fetchMe()
+  currentUser.value = me
   navigate('home')
 }
 
+async function onLogout() {
+  await logoutAccount()
+  currentUser.value = null
+  navigate('landing')
+}
+
 function navigate(page, id = null) {
+  if (appPages.includes(page) && !currentUser.value && !authBooting.value) {
+    currentPage.value = 'login'
+    if (window.location.hash.replace(/^#/, '') !== 'login') {
+      window.location.hash = 'login'
+    }
+    return
+  }
   currentPage.value = page
   let nextHash = page
   if (page === 'detail' && id) nextHash = `detail/${id}`
@@ -492,6 +511,7 @@ function navigate(page, id = null) {
     selectedCompetitorId.value = null
     remixMode.value = false
     remixMessage.value = ''
+    void loadHomeReels()
   }
   if (page === 'plan') {
     stopSpeechPolling()
@@ -778,6 +798,13 @@ async function saveSection(section) {
 
 function syncPageFromHash() {
   const { page, reelId, competitorId } = parseLocationHash()
+  if (appPages.includes(page) && !currentUser.value && !authBooting.value) {
+    currentPage.value = 'login'
+    if (window.location.hash.replace(/^#/, '') !== 'login') {
+      window.location.hash = 'login'
+    }
+    return
+  }
   currentPage.value = page
   if (marketingPages.includes(page)) {
     stopSpeechPolling()
@@ -995,10 +1022,15 @@ async function setShootStatusForReel(reelId, shootStatus) {
 
 onMounted(async () => {
   window.addEventListener('hashchange', syncPageFromHash)
-  if (marketingPages.includes(initialRoute.page)) {
+  await bootstrapAuth()
+  if (marketingPages.includes(initialRoute.page) || marketingPages.includes(currentPage.value)) {
     if (!window.location.hash || window.location.hash === '#') {
-      window.location.hash = initialRoute.page
+      window.location.hash = currentPage.value === 'landing' ? 'landing' : currentPage.value
     }
+    return
+  }
+  if (!currentUser.value) {
+    navigate('login')
     return
   }
   void loadContentPlan()
@@ -1024,19 +1056,28 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <div v-if="authBooting" class="mkt-shell mkt-auth" style="min-height: 100vh">
+    <div class="mkt-auth-card" style="text-align: center">
+      <LoaderCircle :size="28" class="spin" />
+      <p style="margin: 12px 0 0; color: #6b6680">Загрузка…</p>
+    </div>
+  </div>
   <LandingPage
-    v-if="currentPage === 'landing'"
+    v-else-if="currentPage === 'landing'"
     @navigate="navigate"
   />
   <LoginPage
     v-else-if="currentPage === 'login'"
     @navigate="navigate"
-    @enter="enterApp"
   />
   <RegisterPage
     v-else-if="currentPage === 'register'"
     @navigate="navigate"
-    @enter="enterApp"
+  />
+  <VerifyOtpPage
+    v-else-if="currentPage === 'verify-otp'"
+    @navigate="navigate"
+    @entered="onAuthEntered"
   />
   <div v-else class="app-shell">
     <aside class="sidebar">
@@ -1074,6 +1115,15 @@ onBeforeUnmount(() => {
           <span>Конкуренты</span>
         </button>
       </nav>
+      <button
+        class="nav-item"
+        type="button"
+        style="margin-top: auto"
+        @click="onLogout"
+      >
+        <X :size="18" />
+        <span>Выйти</span>
+      </button>
     </aside>
 
     <main class="workspace">

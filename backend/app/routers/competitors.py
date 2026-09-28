@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlmodel import Session, col, select
 
 from app.db import engine, get_session
+from app.deps import get_current_user
 from app.models import Competitor, CompetitorStatus, ContentPlanItem, Reel, ReelStatus
 from app.schemas import CompetitorLoadRequest, CompetitorLoadResponse, CompetitorRead, ReelListItem
 from app.services.instagram_free import (
@@ -17,7 +18,11 @@ from app.services.instagram_free import (
 from app.services.serializers import competitor_to_read, reel_to_list_item
 from app.services.transcript_sections import DEFAULT_CTA, split_transcript_into_sections
 
-router = APIRouter(prefix="/competitors", tags=["competitors"])
+router = APIRouter(
+    prefix="/competitors",
+    tags=["competitors"],
+    dependencies=[Depends(get_current_user)],
+)
 CACHE_TTL = timedelta(hours=6)
 logger = logging.getLogger(__name__)
 
