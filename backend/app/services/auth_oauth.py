@@ -10,10 +10,8 @@ from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.config import get_settings
-from app.models import AuthChallengePurpose, OAuthAccount, User, UserStatus
+from app.models import OAuthAccount, User, UserStatus
 from app.services.auth_service import (
-    challenge_response,
-    create_challenge,
     get_user_by_email,
     normalize_email,
 )
@@ -263,21 +261,3 @@ def upsert_oauth_user(session: Session, profile: OAuthProfile) -> User:
     session.commit()
     session.refresh(user)
     return user
-
-
-def start_oauth_login_2fa(
-    session: Session,
-    *,
-    user: User,
-    ip: str | None,
-    user_agent: str | None,
-) -> dict:
-    """OAuth is factor 1 — still require mandatory email OTP (factor 2)."""
-    challenge, code, email_sent = create_challenge(
-        session,
-        user=user,
-        purpose=AuthChallengePurpose.login_2fa,
-        ip=ip,
-        user_agent=user_agent,
-    )
-    return challenge_response(challenge, user.email, code, email_sent=email_sent)

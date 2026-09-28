@@ -184,6 +184,40 @@ def resend_otp(
     return challenge_response(challenge, user.email, code, email_sent=email_sent)
 
 
+def issue_session_for_user(
+    session: Session,
+    *,
+    user: User,
+    ip: str | None,
+    user_agent: str | None,
+) -> tuple[User, str, str]:
+    """Create access/refresh session for an already-authenticated user."""
+    if user.status == UserStatus.disabled:
+        raise HTTPException(status_code=403, detail="Аккаунт недоступен")
+    now = datetime.now(timezone.utc)
+    if user.status == UserStatus.pending_verification:
+        user.status = UserStatus.active
+        user.email_verified_at = user.email_verified_at or now
+    user.last_login_at = now
+    session.add(user)
+
+    refresh_raw = new_refresh_token()
+    auth_session = AuthSession(
+        user_id=user.id,
+        refresh_token_hash=hash_token(refresh_raw),
+        expires_at=refresh_expiry(),
+        ip=ip,
+        user_agent=(user_agent or "")[:400] or None,
+    )
+    session.add(auth_session)
+    session.commit()
+    session.refresh(auth_session)
+    session.refresh(user)
+
+    access = create_access_token(user_id=user.id, session_id=auth_session.id)
+    return user, access, refresh_raw
+
+
 def verify_challenge_and_issue_session(
     session: Session,
     *,
@@ -218,29 +252,9 @@ def verify_challenge_and_issue_session(
 
     challenge.consumed_at = now
     session.add(challenge)
-
-    if challenge.purpose == AuthChallengePurpose.register:
-        user.status = UserStatus.active
-        user.email_verified_at = now
-
-    user.last_login_at = now
-    session.add(user)
-
-    refresh_raw = new_refresh_token()
-    auth_session = AuthSession(
-        user_id=user.id,
-        refresh_token_hash=hash_token(refresh_raw),
-        expires_at=refresh_expiry(),
-        ip=ip,
-        user_agent=(user_agent or "")[:400] or None,
-    )
-    session.add(auth_session)
     session.commit()
-    session.refresh(auth_session)
-    session.refresh(user)
 
-    access = create_access_token(user_id=user.id, session_id=auth_session.id)
-    return user, access, refresh_raw
+    return issue_session_for_user(session, user=user, ip=ip, user_agent=user_agent)
 
 
 def rotate_refresh_session(

@@ -52,9 +52,12 @@ const pages = [...marketingPages, ...appPages]
 function parseLocationHash() {
   const raw = window.location.hash.replace(/^#/, '').trim()
   const query = new URLSearchParams(window.location.search)
-  // OAuth callback lands on /?auth=verify-otp (hash is unreliable on 302).
+  // OAuth callback lands on /?auth=... (hash is unreliable on 302).
   if (query.get('auth') === 'verify-otp') {
     return { page: 'verify-otp', reelId: null, competitorId: null }
+  }
+  if (query.get('auth') === 'home') {
+    return { page: 'home', reelId: null, competitorId: null }
   }
   if (!raw) {
     if (query.get('oauth_error')) {
@@ -1039,12 +1042,23 @@ onMounted(async () => {
       // ignore
     }
   }
-  if (bootQuery.get('auth') === 'verify-otp' || oauthError) {
-    const cleanHash = bootQuery.get('auth') === 'verify-otp' ? 'verify-otp' : 'login'
+  if (bootQuery.get('auth') === 'verify-otp' || bootQuery.get('auth') === 'home' || oauthError) {
+    const cleanHash =
+      bootQuery.get('auth') === 'home'
+        ? 'home'
+        : bootQuery.get('auth') === 'verify-otp'
+          ? 'verify-otp'
+          : 'login'
     window.history.replaceState({}, '', `${window.location.pathname}#${cleanHash}`)
     currentPage.value = cleanHash
   }
   await bootstrapAuth()
+  if (bootQuery.get('auth') === 'home' && currentUser.value) {
+    void loadHomeReels()
+    void loadInitialCompetitor()
+    void loadContentPlan()
+    return
+  }
   if (marketingPages.includes(initialRoute.page) || marketingPages.includes(currentPage.value)) {
     if (!window.location.hash || window.location.hash === '#') {
       window.location.hash = currentPage.value === 'landing' ? 'landing' : currentPage.value

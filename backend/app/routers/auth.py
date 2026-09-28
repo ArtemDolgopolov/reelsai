@@ -258,14 +258,14 @@ def oauth_start(provider: str, request: Request):
 def oauth_callback(
     provider: str,
     request: Request,
+    response: Response,
     session: Session = Depends(get_session),
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
 ):
-    import json
     import logging
-    from urllib.parse import quote, urlencode
+    from urllib.parse import urlencode
 
     from fastapi.responses import RedirectResponse
 
@@ -291,7 +291,7 @@ def oauth_callback(
     try:
         profile = auth_oauth.exchange_code(provider, code, redirect_uri)
         user = auth_oauth.upsert_oauth_user(session, profile)
-        challenge = auth_oauth.start_oauth_login_2fa(
+        _user, access, refresh = auth_service.issue_session_for_user(
             session, user=user, ip=ip, user_agent=ua
         )
     except HTTPException as exc:
@@ -301,16 +301,8 @@ def oauth_callback(
         logger.exception("OAuth %s unexpected error", provider)
         return fail(f"Внутренняя ошибка: {exc}")
 
-    settings = get_settings()
-    response = RedirectResponse(url=f"{base}/?auth=verify-otp", status_code=302)
-    response.delete_cookie(OAUTH_STATE_COOKIE, path="/")
-    response.set_cookie(
-        PENDING_CHALLENGE_COOKIE,
-        quote(json.dumps(challenge, ensure_ascii=False)),
-        max_age=600,
-        httponly=False,
-        secure=settings.auth_cookie_secure,
-        samesite="lax",
-        path="/",
-    )
-    return response
+    # Skip email OTP for OAuth — provider already verified the identity.
+    redirect = RedirectResponse(url=f"{base}/?auth=home", status_code=302)
+    redirect.delete_cookie(OAUTH_STATE_COOKIE, path="/")
+    _set_auth_cookies(redirect, access, refresh)
+    return redirect
