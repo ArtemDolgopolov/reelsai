@@ -493,14 +493,19 @@ async function onAuthEntered() {
 }
 
 async function onLogout() {
-  await logoutAccount()
+  try {
+    await logoutAccount()
+  } catch {
+    // still leave the local session even if the API call fails
+  }
   currentUser.value = null
   competitorsList.value = []
   competitor.value = null
   competitorReels.value = []
   homeReels.value = []
   planItems.value = []
-  navigate('landing')
+  currentPage.value = 'login'
+  window.location.hash = 'login'
 }
 
 function navigate(page, id = null) {
@@ -754,7 +759,7 @@ async function loadCompetitor(forceRefresh = false) {
     }
 
     competitorHandle.value = ''
-    competitorMessage.value = body.message || 'Конкурент сохранён в списке'
+    competitorMessage.value = 'Конкурент загружен. Можно посмотреть рилсы.'
     await loadCompetitorsList()
     // Stay on the list — user opens reels via «Открыть».
     selectedCompetitorId.value = null
