@@ -8,7 +8,7 @@ from app.db import get_session
 from app.models import Competitor, ContentPlanItem, Reel
 from app.schemas import ReelDetail, ReelListItem, ReelUpdateRequest
 from app.services.instagram_free import looks_like_real_transcript
-from app.services.overview import _is_ai_overview, prepare_russian_remix, schedule_analysis
+from app.services.overview import prepare_russian_remix, schedule_analysis
 from app.services.serializers import reel_to_detail, reel_to_list_item
 from app.services.stt_jobs import ensure_reel_transcript, schedule_transcripts
 from app.services.transcript_sections import DEFAULT_CTA
@@ -116,31 +116,21 @@ def remix_reel(
         session.refresh(reel)
 
     overview, hook, script, cta, used_llm = prepare_russian_remix(reel, competitor)
-    reel.hook = hook or reel.hook or ""
-    reel.script = script or reel.script or ""
-    reel.cta = cta or reel.cta or DEFAULT_CTA
-    if overview and (
-        _is_ai_overview(overview)
-        or not any(
-            marker in overview.lower()
-            for marker in (
-                "через пару секунд",
-                "готовлю короткое объяснение",
-                "собираю объяснение",
-            )
+    if not used_llm or not script:
+        raise HTTPException(
+            status_code=503,
+            detail="Не удалось получить русский перевод. Попробуйте ещё раз через минуту.",
         )
-    ):
+    reel.hook = hook or reel.hook or ""
+    reel.script = script
+    reel.cta = cta or reel.cta or DEFAULT_CTA
+    if overview:
         reel.analysis_overview = overview[:4000]
     session.add(reel)
     session.commit()
     session.refresh(reel)
 
-    detail = reel_to_detail(reel, competitor, session=session)
-    if not used_llm and detail.analysis_pending:
-        # Soft fallback already saved — still ok to return.
-        pass
-    return detail
-
+    return reel_to_detail(reel, competitor, session=session)
 
 @router.patch("/{reel_id}", response_model=ReelDetail)
 def update_reel(

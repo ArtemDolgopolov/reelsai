@@ -337,3 +337,120 @@ def structure_remix_sections(transcript: str, caption: str | None = None) -> tup
     if not hook or not script:
         return None
     return str(hook), str(script), str(cta)
+
+
+def _latin_share(text: str) -> float:
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters:
+        return 0.0
+    latin = sum(1 for ch in letters if "a" <= ch.lower() <= "z")
+    return latin / len(letters)
+
+
+def translate_transcript_to_russian(transcript: str, *, allow_wait: bool = True) -> str | None:
+    """Plain Russian translation of the spoken transcript (no structure)."""
+    spoken = (transcript or "").strip()
+    if not spoken:
+        return None
+    # Already mostly Russian — keep as the "translation" base.
+    if _latin_share(spoken) < 0.35:
+        return re.sub(r"\s+", " ", spoken)[:2000]
+
+    system = (
+        "Ты переводчик Reels. Переведи расшифровку речи на русский язык. "
+        "Сохрани смысл, тон и разговорный стиль устной речи. "
+        "Не сокращай содержание. Не добавляй заголовки, пояснения, кавычки и markdown. "
+        "Верни ТОЛЬКО текст перевода."
+    )
+    raw = groq_chat(
+        system=system,
+        user=f"Оригинал:\n{spoken[:1800]}",
+        temperature=0.15,
+        max_tokens=900,
+        allow_wait=allow_wait,
+    )
+    if not raw:
+        return None
+    cleaned = re.sub(r"\s+", " ", raw).strip().strip("\"'«»")
+    if len(cleaned) < 20:
+        return None
+    # Reject if model echoed English.
+    if _latin_share(cleaned) > 0.45:
+        return None
+    return cleaned[:2000]
+
+
+def remix_bilingual_bundle(
+    *,
+    transcript: str | None,
+    caption: str | None = None,
+    title: str | None = None,
+    author: str = "",
+    handle: str = "",
+) -> dict[str, str] | None:
+    """
+    Build Remix payload: full Russian translation + hook/script/cta.
+    translation ≈ full RU of the original speech (shown side-by-side with original).
+    """
+    spoken = (transcript or "").strip()
+    source = spoken or (caption or "").strip() or (title or "").strip()
+    if not source:
+        return None
+
+    translation = translate_transcript_to_russian(source, allow_wait=True)
+    if not translation:
+        return None
+
+    system = (
+        "Ты сценарист Reels. На вход — русский перевод зарубежного ролика. "
+        "Собери сценарий для съёмки и верни ТОЛЬКО JSON с ключами "
+        "overview, hook, script, cta. "
+        "overview — 2 коротких абзаца по-русски: о чём ролик и какой посыл. "
+        "hook — цепляющее начало на русском (1–2 предложения, до 200 символов). "
+        "script — основной текст на русском сплошным абзацем; опирайся на перевод, "
+        "можно слегка сжать, но не оставляй английский. "
+        "cta — короткий финальный призыв на русском. "
+        "Пиши естественно для устной русской речи."
+    )
+    user = (
+        (f"Автор: {author} ({handle})\n" if author or handle else "")
+        + f"Русский перевод оригинала:\n{translation[:1600]}"
+    )
+    raw = groq_chat(
+        system=system,
+        user=user,
+        temperature=0.2,
+        max_tokens=750,
+        allow_wait=True,
+    )
+    hook = translation[:200]
+    script = translation[:2000]
+    cta = "Сохрани и попробуй этот формат в своём следующем рилсе."
+    overview = (
+        "Этот рилс адаптирован под русскоязычную съёмку. "
+        "Ниже — перевод оригинала: отредактируйте текст под свой контент."
+    )
+    if raw:
+        data = _extract_json_object(raw) or {}
+        maybe_hook = _clean_prose(data.get("hook"), 200)
+        maybe_script = _clean_prose(data.get("script"), 2000)
+        maybe_cta = _clean_prose(data.get("cta"), 500)
+        maybe_overview = str(data.get("overview") or "").strip()
+        if maybe_hook and _latin_share(maybe_hook) < 0.45:
+            hook = maybe_hook
+        if maybe_script and _latin_share(maybe_script) < 0.45:
+            script = maybe_script
+        else:
+            script = translation[:2000]
+        if maybe_cta and _latin_share(maybe_cta) < 0.45:
+            cta = maybe_cta
+        if maybe_overview and _latin_share(maybe_overview) < 0.45:
+            overview = maybe_overview[:1600]
+
+    return {
+        "translation": translation[:2000],
+        "hook": hook,
+        "script": script,
+        "cta": cta,
+        "overview": overview,
+    }

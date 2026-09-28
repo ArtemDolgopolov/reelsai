@@ -13,7 +13,7 @@ from sqlmodel import Session
 
 from app.db import engine
 from app.models import Competitor, Reel
-from app.services.groq_llm import analyze_reel_bundle, explain_reel_in_russian
+from app.services.groq_llm import analyze_reel_bundle, explain_reel_in_russian, remix_bilingual_bundle
 from app.services.instagram_free import looks_like_real_transcript
 from app.services.transcript_sections import (
     DEFAULT_CTA,
@@ -221,7 +221,12 @@ def store_cached_analysis(
 def _sections_look_structured(spoken: str, reel: Reel) -> bool:
     stored_script = continuous_text(reel.script)
     stored_cta = continuous_text(reel.cta)
-    if not stored_script or stored_script == spoken:
+    if not stored_script:
+        return False
+    # Persisted Russian remix/translation is intentional — keep it.
+    if _latin_ratio(stored_script) < 0.4:
+        return True
+    if stored_script == spoken:
         return False
     if "\n" in (reel.script or "") or re.search(r"(?m)^\d{1,2}[.)]\s+", reel.script or ""):
         return False
@@ -465,6 +470,7 @@ def prepare_russian_remix(reel: Reel, competitor: Competitor) -> tuple[str, str,
     """
     Force a Russian adaptation: overview + hook/script/cta for filming.
     Returns overview, hook, script, cta, used_llm.
+    script holds the Russian translation shown opposite the original transcript.
     """
     from app.services.serializers import format_duration, format_views
 
@@ -476,63 +482,9 @@ def prepare_russian_remix(reel: Reel, competitor: Competitor) -> tuple[str, str,
     caption = continuous_text(reel.caption)
     title = continuous_text(reel.title)
     has_speech = looks_like_real_transcript(spoken)
-    used_llm = False
-    overview = continuous_text(reel.analysis_overview)
-    hook = continuous_text(reel.hook)
-    script = continuous_text(reel.script)
-    cta = continuous_text(reel.cta) or DEFAULT_CTA
 
-    # Dedicated remix pass: translate + structure for RU filming script.
     source = spoken if has_speech else (caption or title)
-    if source:
-        bundle = analyze_reel_bundle(
-            author=author,
-            handle=handle,
-            duration_label=duration_label,
-            views_label=views_label,
-            transcript=spoken if has_speech else None,
-            caption=caption or None,
-            title=title or None,
-            need_overview=True,
-            allow_wait=True,
-        )
-        if bundle and bundle.get("hook") and bundle.get("script"):
-            overview = (
-                f"{build_header(author, handle, duration_label, views_label)}\n\n"
-                f"{(bundle.get('overview') or '').strip()}"
-            ).strip()
-            hook = bundle["hook"][:200]
-            script = continuous_text(bundle["script"])[:2000]
-            cta = continuous_text(bundle.get("cta"))[:500] or DEFAULT_CTA
-            used_llm = True
-            store_cached_analysis(reel, overview, hook, script, cta, from_llm=True)
-
-    if not hook or not script:
-        overview2, hook2, script2, cta2, _pending = enrich_reel_analysis(
-            reel,
-            competitor,
-            views_label=views_label,
-            duration_label=duration_label,
-            sync_llm=True,
-        )
-        if not overview:
-            overview = overview2
-        if not hook:
-            hook = hook2
-        if not script:
-            script = script2
-        if not cta:
-            cta = cta2
-        used_llm = used_llm or _is_ai_overview(overview)
-
-    if not hook or not script:
-        hook, script, cta = split_transcript_into_sections(
-            spoken if has_speech else None,
-            caption or title,
-            use_llm=True,
-        )
-
-    if not overview or any(marker in overview.lower() for marker in _PLACEHOLDER_MARKERS):
+    if not source:
         overview = offline_overview(
             author=author,
             handle=handle,
@@ -541,11 +493,47 @@ def prepare_russian_remix(reel: Reel, competitor: Competitor) -> tuple[str, str,
             spoken=spoken,
             caption=caption,
             title=title,
-            has_speech=has_speech,
+            has_speech=False,
             waiting=False,
         )
+        return overview, "", "", DEFAULT_CTA, False
 
-    return overview, hook[:200], script[:2000], (cta or DEFAULT_CTA)[:500], used_llm
+    bundle = remix_bilingual_bundle(
+        transcript=spoken if has_speech else None,
+        caption=caption or None,
+        title=title or None,
+        author=author,
+        handle=handle,
+    )
+    if bundle and bundle.get("translation"):
+        # Prefer full translation in script so UI can show original | перевод.
+        translation = continuous_text(bundle["translation"])[:2000]
+        hook = continuous_text(bundle.get("hook"))[:200] or translation[:200]
+        script = translation
+        cta = continuous_text(bundle.get("cta"))[:500] or DEFAULT_CTA
+        overview_body = (bundle.get("overview") or "").strip()
+        overview = (
+            f"{build_header(author, handle, duration_label, views_label)}\n\n"
+            f"{overview_body}"
+        ).strip()
+        store_cached_analysis(reel, overview, hook, script, cta, from_llm=True)
+        return overview, hook, script, cta, True
+
+    # Do not fall back to English transcript chunks — that looks like "no translation".
+    overview = offline_overview(
+        author=author,
+        handle=handle,
+        duration_label=duration_label,
+        views_label=views_label,
+        spoken=spoken,
+        caption=caption,
+        title=title,
+        has_speech=has_speech,
+        waiting=False,
+    )
+    return overview, continuous_text(reel.hook)[:200], continuous_text(reel.script)[:2000], (
+        continuous_text(reel.cta) or DEFAULT_CTA
+    )[:500], False
 
 
 def build_reel_overview(reel: Reel, competitor: Competitor, *, views_label: str, duration_label: str) -> str:
