@@ -39,14 +39,35 @@ import {
   X,
   Zap,
 } from '@lucide/vue'
+import LandingPage from './components/marketing/LandingPage.vue'
+import LoginPage from './components/marketing/LoginPage.vue'
+import RegisterPage from './components/marketing/RegisterPage.vue'
 
-const pages = ['home', 'plan', 'competitors', 'detail']
+const marketingPages = ['landing', 'login', 'register']
+const appPages = ['home', 'plan', 'competitors', 'detail']
+const pages = [...marketingPages, ...appPages]
+const AUTH_KEY = 'reelsai_authed'
+
+function readAuthed() {
+  try {
+    return window.localStorage.getItem(AUTH_KEY) === '1'
+  } catch {
+    return false
+  }
+}
 
 function parseLocationHash() {
   const raw = window.location.hash.replace(/^#/, '').trim()
-  if (!raw) return { page: 'home', reelId: null, competitorId: null }
+  if (!raw) {
+    return {
+      page: readAuthed() ? 'home' : 'landing',
+      reelId: null,
+      competitorId: null,
+    }
+  }
   const [pagePart, ...rest] = raw.split('/')
-  const page = pages.includes(pagePart) ? pagePart : 'home'
+  let page = pages.includes(pagePart) ? pagePart : null
+  if (!page) page = readAuthed() ? 'home' : 'landing'
   const reelId = page === 'detail' && rest[0] ? rest[0] : null
   const competitorId = page === 'competitors' && rest[0] ? rest[0] : null
   return { page, reelId, competitorId }
@@ -54,6 +75,7 @@ function parseLocationHash() {
 
 const initialRoute = parseLocationHash()
 const currentPage = ref(initialRoute.page)
+const isAuthed = ref(readAuthed())
 const searchQuery = ref('')
 const competitorHandle = ref('')
 const competitorsList = ref([])
@@ -436,6 +458,16 @@ function onThumbError(event) {
   if (poster) poster.classList.add('thumb-missing')
 }
 
+function enterApp() {
+  try {
+    window.localStorage.setItem(AUTH_KEY, '1')
+  } catch {
+    // ignore
+  }
+  isAuthed.value = true
+  navigate('home')
+}
+
 function navigate(page, id = null) {
   currentPage.value = page
   let nextHash = page
@@ -443,6 +475,14 @@ function navigate(page, id = null) {
   if (page === 'competitors' && id) nextHash = `competitors/${id}`
   if (window.location.hash.replace(/^#/, '') !== nextHash) {
     window.location.hash = nextHash
+  }
+  if (marketingPages.includes(page)) {
+    stopSpeechPolling()
+    resetVideoUi()
+    selectedReel.value = null
+    editingSection.value = null
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+    return
   }
   if (page === 'home') {
     stopSpeechPolling()
@@ -739,6 +779,12 @@ async function saveSection(section) {
 function syncPageFromHash() {
   const { page, reelId, competitorId } = parseLocationHash()
   currentPage.value = page
+  if (marketingPages.includes(page)) {
+    stopSpeechPolling()
+    selectedReel.value = null
+    editingSection.value = null
+    return
+  }
   if (page === 'detail' && reelId) {
     if (selectedReel.value?.id !== reelId && !detailLoading.value) {
       openReel(reelId, { syncHash: false })
@@ -949,6 +995,12 @@ async function setShootStatusForReel(reelId, shootStatus) {
 
 onMounted(async () => {
   window.addEventListener('hashchange', syncPageFromHash)
+  if (marketingPages.includes(initialRoute.page)) {
+    if (!window.location.hash || window.location.hash === '#') {
+      window.location.hash = initialRoute.page
+    }
+    return
+  }
   void loadContentPlan()
   if (initialRoute.page === 'detail' && initialRoute.reelId) {
     // Open the reel immediately — home discovery can take tens of seconds.
@@ -972,7 +1024,21 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app-shell">
+  <LandingPage
+    v-if="currentPage === 'landing'"
+    @navigate="navigate"
+  />
+  <LoginPage
+    v-else-if="currentPage === 'login'"
+    @navigate="navigate"
+    @enter="enterApp"
+  />
+  <RegisterPage
+    v-else-if="currentPage === 'register'"
+    @navigate="navigate"
+    @enter="enterApp"
+  />
+  <div v-else class="app-shell">
     <aside class="sidebar">
       <button class="brand" type="button" @click="navigate('home')">
         <span class="brand-mark"><WandSparkles :size="19" /></span>
