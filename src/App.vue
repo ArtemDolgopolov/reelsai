@@ -109,6 +109,9 @@ const userEmail = computed(() => currentUser.value?.email || '')
 const searchQuery = ref('')
 const competitorHandle = ref('')
 const competitorsList = ref([])
+const competitorsLoading = ref(
+  initialRoute.page === 'competitors' && !initialRoute.competitorId,
+)
 const competitor = ref(null)
 const competitorReels = ref([])
 const competitorMessage = ref('')
@@ -121,7 +124,7 @@ const selectedCompetitorId = ref(initialRoute.competitorId)
 const homeReels = ref([])
 const homeLoading = ref(true)
 const planItems = ref([])
-const planLoading = ref(false)
+const planLoading = ref(initialRoute.page === 'plan')
 const planBusyReelId = ref(null)
 const planBusyItemId = ref(null)
 const planMessage = ref('')
@@ -138,6 +141,7 @@ const videoVolume = ref(0.7)
 const videoProgressPct = ref(0)
 const videoCurrentLabel = ref('0:00')
 const videoBusy = ref(false)
+const videoSeeking = ref(false)
 const showVideoChrome = ref(false)
 const editingSection = ref(null)
 const draft = ref('')
@@ -407,9 +411,28 @@ function resetVideoUi() {
 
 function onVideoTimeUpdate() {
   const el = detailVideo.value
-  if (!el || !el.duration) return
+  if (!el || !el.duration || videoSeeking.value) return
   videoProgressPct.value = Math.min(100, (el.currentTime / el.duration) * 100)
   videoCurrentLabel.value = formatClock(el.currentTime)
+}
+
+function onVideoSeekInput(event) {
+  const el = detailVideo.value
+  const pct = Number(event?.target?.value)
+  if (!el || !Number.isFinite(pct)) return
+  videoSeeking.value = true
+  videoProgressPct.value = Math.min(100, Math.max(0, pct))
+  if (el.duration) {
+    el.currentTime = (videoProgressPct.value / 100) * el.duration
+    videoCurrentLabel.value = formatClock(el.currentTime)
+  }
+  revealVideoChrome()
+}
+
+function onVideoSeekChange() {
+  videoSeeking.value = false
+  onVideoTimeUpdate()
+  revealVideoChrome()
 }
 
 function onVideoPlay() {
@@ -966,12 +989,16 @@ function syncPageFromHash() {
 }
 
 async function loadCompetitorsList() {
+  const hadItems = competitorsList.value.length > 0
+  if (!hadItems) competitorsLoading.value = true
   try {
     const response = await apiFetch('/api/competitors', { cache: 'no-store' })
     if (!response.ok) return
     competitorsList.value = await response.json()
   } catch {
     // Keep the last known list if refresh fails.
+  } finally {
+    competitorsLoading.value = false
   }
 }
 
@@ -1435,11 +1462,14 @@ onBeforeUnmount(() => {
           </div>
         </header>
 
-        <Transition name="toast">
-          <div v-if="planMessage" class="competitor-feedback" key="plan-toast">
-            <span class="success-badge"><Check :size="14" /> {{ planMessage }}</span>
-          </div>
-        </Transition>
+        <div class="toast-layer">
+          <Transition name="toast">
+            <div v-if="planMessage" class="toast-banner success" key="plan-toast">
+              <Check :size="14" />
+              {{ planMessage }}
+            </div>
+          </Transition>
+        </div>
 
         <div v-if="planItems.length" class="plan-cards">
           <article
@@ -1608,15 +1638,17 @@ onBeforeUnmount(() => {
             </button>
           </div>
 
-          <div class="competitor-feedback-slot">
+          <div class="toast-layer">
             <Transition name="toast">
-              <div v-if="competitorMessage" class="competitor-feedback" key="competitor-ok">
-                <span class="success-badge"><Check :size="14" /> {{ competitorMessage }}</span>
+              <div v-if="competitorMessage" class="toast-banner success" key="competitor-ok">
+                <Check :size="14" />
+                {{ competitorMessage }}
               </div>
             </Transition>
             <Transition name="toast">
-              <div v-if="saveError" class="competitor-feedback" key="competitor-err">
-                <span class="save-notice error"><CircleHelp :size="14" /> {{ saveError }}</span>
+              <div v-if="saveError" class="toast-banner error" key="competitor-err">
+                <CircleHelp :size="14" />
+                {{ saveError }}
               </div>
             </Transition>
           </div>
@@ -1624,7 +1656,13 @@ onBeforeUnmount(() => {
           <div class="competitors-section">
             <h2>Загруженные конкуренты</h2>
 
-            <div v-if="competitorsList.length" class="competitors-list">
+            <div v-if="competitorsLoading" class="empty-state competitors-empty">
+              <LoaderCircle :size="28" class="spin" />
+              <strong>Загружаем конкурентов…</strong>
+              <span>Секунду, подтягиваем ваш список</span>
+            </div>
+
+            <div v-else-if="competitorsList.length" class="competitors-list">
               <article
                 v-for="item in competitorsList"
                 :key="item.id"
@@ -1870,7 +1908,24 @@ onBeforeUnmount(() => {
                     @input="onVideoVolumeInput"
                   />
                 </div>
-                <span class="video-progress"><i :style="{ width: `${videoProgressPct}%` }"></i></span>
+                <div v-if="playbackSrc" class="video-seek-wrap" @click.stop>
+                  <input
+                    class="video-seek"
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    :value="videoProgressPct"
+                    :style="{
+                      background: `linear-gradient(to right, #fff ${videoProgressPct}%, rgb(255 255 255 / 35%) ${videoProgressPct}%)`,
+                    }"
+                    aria-label="Перемотка видео"
+                    @input="onVideoSeekInput"
+                    @change="onVideoSeekChange"
+                    @pointerdown="videoSeeking = true"
+                    @pointerup="onVideoSeekChange"
+                  />
+                </div>
                 <span class="video-time">{{ videoCurrentLabel }} / {{ selectedDurationLabel }}</span>
               </div>
             </div>
@@ -1935,27 +1990,27 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="insight-list">
-            <div class="insight-toasts">
+            <div class="insight-toasts toast-layer insight-toast-layer">
               <Transition name="toast">
-                <div v-if="remixMessage" class="save-notice success" key="remix-msg">
+                <div v-if="remixMessage" class="toast-banner success" key="remix-msg">
                   <WandSparkles :size="15" />
                   {{ remixMessage }}
                 </div>
               </Transition>
               <Transition name="toast">
-                <div v-if="remixLoading" class="save-notice success" key="remix-loading">
+                <div v-if="remixLoading" class="toast-banner success" key="remix-loading">
                   <LoaderCircle :size="15" class="spin" />
                   Переводим оригинал на русский…
                 </div>
               </Transition>
               <Transition name="toast">
-                <div v-if="saveState === 'saved'" class="save-notice success" key="save-ok">
+                <div v-if="saveState === 'saved'" class="toast-banner success" key="save-ok">
                   <Check :size="15" />
                   Изменения сохранены
                 </div>
               </Transition>
               <Transition name="toast">
-                <div v-if="saveError" class="save-notice error" key="save-err">
+                <div v-if="saveError" class="toast-banner error" key="save-err">
                   <CircleHelp :size="15" />
                   {{ saveError }}
                 </div>
