@@ -15,6 +15,15 @@ const providers = ref({ google: false, yandex: false })
 
 onMounted(async () => {
   providers.value = await fetchOauthProviders()
+  try {
+    const stored = sessionStorage.getItem('reelsai_oauth_error')
+    if (stored) {
+      error.value = stored
+      sessionStorage.removeItem('reelsai_oauth_error')
+    }
+  } catch {
+    // ignore
+  }
 })
 
 async function onSubmit() {

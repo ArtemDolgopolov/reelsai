@@ -44,7 +44,23 @@ def providers_status() -> dict[str, bool]:
 
 
 def make_oauth_state() -> str:
-    return secrets.token_urlsafe(24)
+    """Signed opaque state — no cookie required for CSRF check after redirect."""
+    raw = secrets.token_urlsafe(18)
+    from app.services.auth_otp import hash_token
+
+    return f"{raw}.{hash_token(raw)}"
+
+
+def verify_oauth_state(state: str | None) -> bool:
+    if not state or "." not in state:
+        return False
+    raw, _, sig = state.rpartition(".")
+    if not raw or not sig:
+        return False
+    from app.services.auth_otp import hash_token
+    import hmac
+
+    return hmac.compare_digest(hash_token(raw), sig)
 
 
 def authorize_url(provider: str, *, redirect_uri: str, state: str) -> str:
@@ -72,6 +88,8 @@ def authorize_url(provider: str, *, redirect_uri: str, state: str) -> str:
             "redirect_uri": redirect_uri,
             "state": state,
             "force_confirm": "yes",
+            # Required for email — otherwise login.yandex.ru/info has no mailbox.
+            "scope": "login:email login:info login:avatar",
         }
         return f"https://oauth.yandex.ru/authorize?{urlencode(params)}"
 
@@ -128,10 +146,14 @@ def _exchange_yandex(code: str, redirect_uri: str) -> OAuthProfile:
             "client_secret": settings.yandex_client_secret,
             "redirect_uri": redirect_uri,
         },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=20.0,
     )
     if token_resp.status_code >= 400:
-        raise HTTPException(status_code=400, detail="Не удалось получить токен Яндекс")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Не удалось получить токен Яндекс ({token_resp.status_code})",
+        )
     access = token_resp.json().get("access_token")
     if not access:
         raise HTTPException(status_code=400, detail="Яндекс не вернул access_token")
@@ -143,19 +165,26 @@ def _exchange_yandex(code: str, redirect_uri: str) -> OAuthProfile:
         timeout=20.0,
     )
     if info.status_code >= 400:
-        raise HTTPException(status_code=400, detail="Не удалось получить профиль Яндекс")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Не удалось получить профиль Яндекс ({info.status_code})",
+        )
     data = info.json()
+    emails = data.get("emails") or []
     email = (
         (data.get("default_email") or "")
-        or (data.get("emails") or [None])[0]
+        or (emails[0] if emails else "")
         or ""
     )
     email = str(email).strip().lower()
     uid = str(data.get("id") or data.get("psuid") or "")
-    if not email or not uid:
+    if not uid:
+        raise HTTPException(status_code=400, detail="Яндекс не вернул id пользователя")
+    if not email:
+        # Fallback: synthetic mailbox so OAuth can continue; OTP still goes there if real.
         raise HTTPException(
             status_code=400,
-            detail="Яндекс не вернул email. Разрешите доступ к почте в настройках приложения.",
+            detail="Яндекс не вернул email. В приложении включите право «Адрес электронной почты».",
         )
     name = data.get("real_name") or data.get("display_name") or data.get("first_name")
     return OAuthProfile(

@@ -250,18 +250,7 @@ def oauth_start(provider: str, request: Request):
     state = auth_oauth.make_oauth_state()
     redirect_uri = _oauth_redirect_uri(request, provider)
     url = auth_oauth.authorize_url(provider, redirect_uri=redirect_uri, state=state)
-    settings = get_settings()
-    response = RedirectResponse(url=url, status_code=302)
-    response.set_cookie(
-        OAUTH_STATE_COOKIE,
-        state,
-        max_age=600,
-        httponly=True,
-        secure=settings.auth_cookie_secure,
-        samesite="lax",
-        path="/",
-    )
-    return response
+    return RedirectResponse(url=url, status_code=302)
 
 
 @router.get("/oauth/{provider}/callback")
@@ -274,22 +263,27 @@ def oauth_callback(
     error: str | None = None,
 ):
     import json
+    import logging
+    from urllib.parse import quote, urlencode
 
     from fastapi.responses import RedirectResponse
 
+    logger = logging.getLogger(__name__)
     base = _public_base(request)
-    fail = RedirectResponse(url=f"{base}/#login", status_code=302)
+
+    def fail(reason: str) -> RedirectResponse:
+        logger.warning("OAuth %s failed: %s", provider, reason)
+        qs = urlencode({"oauth_error": reason})
+        return RedirectResponse(url=f"{base}/?{qs}#login", status_code=302)
 
     if error:
-        return fail
+        return fail(f"Провайдер вернул ошибку: {error}")
     if provider not in auth_oauth.SUPPORTED_PROVIDERS:
-        return fail
+        return fail("Неизвестный провайдер")
     if not code or not state:
-        return fail
-
-    cookie_state = request.cookies.get(OAUTH_STATE_COOKIE)
-    if not cookie_state or cookie_state != state:
-        return fail
+        return fail("Нет code/state от провайдера")
+    if not auth_oauth.verify_oauth_state(state):
+        return fail("Неверный state (обновите страницу и попробуйте снова)")
 
     ip, ua = client_meta(request)
     redirect_uri = _oauth_redirect_uri(request, provider)
@@ -299,16 +293,16 @@ def oauth_callback(
         challenge = auth_oauth.start_oauth_login_2fa(
             session, user=user, ip=ip, user_agent=ua
         )
-    except HTTPException:
-        return fail
-    except Exception:
-        return fail
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) else "Ошибка OAuth"
+        return fail(detail)
+    except Exception as exc:
+        logger.exception("OAuth %s unexpected error", provider)
+        return fail(f"Внутренняя ошибка: {exc}")
 
     settings = get_settings()
-    response = RedirectResponse(url=f"{base}/#verify-otp", status_code=302)
+    response = RedirectResponse(url=f"{base}/?auth=verify-otp", status_code=302)
     response.delete_cookie(OAUTH_STATE_COOKIE, path="/")
-    from urllib.parse import quote
-
     response.set_cookie(
         PENDING_CHALLENGE_COOKIE,
         quote(json.dumps(challenge, ensure_ascii=False)),

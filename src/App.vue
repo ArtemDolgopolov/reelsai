@@ -51,7 +51,15 @@ const pages = [...marketingPages, ...appPages]
 
 function parseLocationHash() {
   const raw = window.location.hash.replace(/^#/, '').trim()
+  const query = new URLSearchParams(window.location.search)
+  // OAuth callback lands on /?auth=verify-otp (hash is unreliable on 302).
+  if (query.get('auth') === 'verify-otp') {
+    return { page: 'verify-otp', reelId: null, competitorId: null }
+  }
   if (!raw) {
+    if (query.get('oauth_error')) {
+      return { page: 'login', reelId: null, competitorId: null }
+    }
     return {
       page: 'landing',
       reelId: null,
@@ -1022,6 +1030,20 @@ async function setShootStatusForReel(reelId, shootStatus) {
 
 onMounted(async () => {
   window.addEventListener('hashchange', syncPageFromHash)
+  const bootQuery = new URLSearchParams(window.location.search)
+  const oauthError = bootQuery.get('oauth_error')
+  if (oauthError) {
+    try {
+      sessionStorage.setItem('reelsai_oauth_error', oauthError)
+    } catch {
+      // ignore
+    }
+  }
+  if (bootQuery.get('auth') === 'verify-otp' || oauthError) {
+    const cleanHash = bootQuery.get('auth') === 'verify-otp' ? 'verify-otp' : 'login'
+    window.history.replaceState({}, '', `${window.location.pathname}#${cleanHash}`)
+    currentPage.value = cleanHash
+  }
   await bootstrapAuth()
   if (marketingPages.includes(initialRoute.page) || marketingPages.includes(currentPage.value)) {
     if (!window.location.hash || window.location.hash === '#') {
