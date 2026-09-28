@@ -85,6 +85,7 @@ const videoVolume = ref(0.7)
 const videoProgressPct = ref(0)
 const videoCurrentLabel = ref('0:00')
 const videoBusy = ref(false)
+const videoHovered = ref(false)
 const editingSection = ref(null)
 const draft = ref('')
 const saveState = ref('idle')
@@ -1430,7 +1431,17 @@ onBeforeUnmount(() => {
 
         <div v-else class="detail-layout">
           <div class="video-column">
-            <div class="featured-video" :class="{ playing: videoPlaying, 'thumb-missing': !selectedReel.thumbnail_url }">
+            <div
+              class="featured-video"
+              :class="{
+                playing: videoPlaying,
+                'thumb-missing': !selectedReel.thumbnail_url,
+                'show-chrome': !videoPlaying || videoHovered,
+              }"
+              @mouseenter="videoHovered = true"
+              @mousemove="videoHovered = true"
+              @mouseleave="videoHovered = false"
+            >
               <video
                 v-if="playbackSrc"
                 ref="detailVideo"
@@ -1454,40 +1465,42 @@ onBeforeUnmount(() => {
               />
               <span v-if="!videoPlaying" class="poster-shade"></span>
               <span v-if="!videoPlaying" class="poster-hook">{{ posterLine(selectedReel) }}</span>
-              <button
-                v-if="!videoPlaying"
-                type="button"
-                class="video-play-btn"
-                aria-label="Воспроизвести видео"
-                :disabled="videoBusy"
-                @click="toggleVideoPlayback"
-              >
-                <LoaderCircle v-if="videoBusy" :size="22" class="spin" />
-                <Play v-else :size="24" fill="currentColor" />
-              </button>
-              <div v-if="videoPlaying || playbackSrc" class="video-volume" @click.stop>
+              <div class="video-chrome">
                 <button
+                  v-if="!videoPlaying"
                   type="button"
-                  class="video-mute-btn"
-                  :aria-label="videoMuted || videoVolume <= 0.01 ? 'Включить звук' : 'Выключить звук'"
-                  @click="toggleVideoMute"
+                  class="video-play-btn"
+                  aria-label="Воспроизвести видео"
+                  :disabled="videoBusy"
+                  @click="toggleVideoPlayback"
                 >
-                  <VolumeX v-if="videoMuted || videoVolume <= 0.01" :size="16" />
-                  <Volume2 v-else :size="16" />
+                  <LoaderCircle v-if="videoBusy" :size="22" class="spin" />
+                  <Play v-else :size="24" fill="currentColor" />
                 </button>
-                <input
-                  class="video-volume-slider"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  :value="videoMuted ? 0 : videoVolume"
-                  aria-label="Громкость"
-                  @input="onVideoVolumeInput"
-                />
+                <div v-if="playbackSrc" class="video-volume" @click.stop>
+                  <button
+                    type="button"
+                    class="video-mute-btn"
+                    :aria-label="videoMuted || videoVolume <= 0.01 ? 'Включить звук' : 'Выключить звук'"
+                    @click="toggleVideoMute"
+                  >
+                    <VolumeX v-if="videoMuted || videoVolume <= 0.01" :size="15" />
+                    <Volume2 v-else :size="15" />
+                  </button>
+                  <input
+                    class="video-volume-slider"
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    :value="videoMuted ? 0 : videoVolume"
+                    aria-label="Громкость"
+                    @input="onVideoVolumeInput"
+                  />
+                </div>
+                <span class="video-progress"><i :style="{ width: `${videoProgressPct}%` }"></i></span>
+                <span class="video-time">{{ videoCurrentLabel }} / {{ selectedDurationLabel }}</span>
               </div>
-              <span class="video-progress"><i :style="{ width: `${videoProgressPct}%` }"></i></span>
-              <span class="video-time">{{ videoCurrentLabel }} / {{ selectedDurationLabel }}</span>
             </div>
             <div class="video-actions single">
               <button
