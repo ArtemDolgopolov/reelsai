@@ -58,12 +58,12 @@
 
 .mkt-logo-mark {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   color: white;
   place-items: center;
-  background: linear-gradient(145deg, #8b5cf6, #6d28d9);
-  border-radius: 10px;
+  background: linear-gradient(145deg, #a855f7, #6d28d9);
+  border-radius: 11px;
   box-shadow: 0 8px 18px rgb(124 58 237 / 28%);
 }
 

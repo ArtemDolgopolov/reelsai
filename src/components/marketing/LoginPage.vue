@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { ArrowRight, Eye, EyeOff, LoaderCircle, Lock, Mail, Zap } from '@lucide/vue'
+import { ArrowRight, Eye, EyeOff, LoaderCircle, Lock, Mail, WandSparkles } from '@lucide/vue'
 import { fetchOauthProviders, loginAccount, oauthStartUrl, saveChallenge } from '../../authApi.js'
 
 const emit = defineEmits(['navigate'])
@@ -52,8 +52,8 @@ function startOauth(provider) {
   <div class="mkt-shell mkt-auth">
     <div class="mkt-auth-top">
       <button class="mkt-logo" type="button" @click="$emit('navigate', 'landing')">
-        <span class="mkt-logo-mark"><Zap :size="18" fill="currentColor" /></span>
-        AI Рилс Продюсер
+        <span class="mkt-logo-mark"><WandSparkles :size="19" /></span>
+        Reels Finder
       </button>
     </div>
 

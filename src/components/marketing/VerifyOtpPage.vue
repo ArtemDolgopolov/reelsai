@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { ArrowRight, KeyRound, LoaderCircle, Zap } from '@lucide/vue'
+import { ArrowRight, KeyRound, LoaderCircle, WandSparkles } from '@lucide/vue'
 import { clearChallenge, loadChallenge, resendOtp, saveChallenge, verifyOtp } from '../../authApi.js'
 
 const emit = defineEmits(['navigate', 'entered'])
@@ -59,8 +59,8 @@ async function onResend() {
   <div class="mkt-shell mkt-auth">
     <div class="mkt-auth-top">
       <button class="mkt-logo" type="button" @click="$emit('navigate', 'landing')">
-        <span class="mkt-logo-mark"><Zap :size="18" fill="currentColor" /></span>
-        AI Рилс Продюсер
+        <span class="mkt-logo-mark"><WandSparkles :size="19" /></span>
+        Reels Finder
       </button>
     </div>
 
