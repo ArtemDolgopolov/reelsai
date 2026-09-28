@@ -85,7 +85,7 @@ const videoVolume = ref(0.7)
 const videoProgressPct = ref(0)
 const videoCurrentLabel = ref('0:00')
 const videoBusy = ref(false)
-const videoHovered = ref(false)
+const showVideoChrome = ref(false)
 const editingSection = ref(null)
 const draft = ref('')
 const saveState = ref('idle')
@@ -96,6 +96,8 @@ const analysisRevealKey = ref(0)
 
 let speechPollTimer = null
 let copiedTimer = null
+let chromeIdleTimer = null
+const CHROME_IDLE_MS = 2200
 
 const sectionLimits = {
   hook: 200,
@@ -279,11 +281,38 @@ function formatClock(seconds) {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
+function clearChromeIdleTimer() {
+  if (chromeIdleTimer) {
+    window.clearTimeout(chromeIdleTimer)
+    chromeIdleTimer = null
+  }
+}
+
+function scheduleChromeHide() {
+  clearChromeIdleTimer()
+  if (!videoPlaying.value) return
+  chromeIdleTimer = window.setTimeout(() => {
+    showVideoChrome.value = false
+    chromeIdleTimer = null
+  }, CHROME_IDLE_MS)
+}
+
+function revealVideoChrome() {
+  showVideoChrome.value = true
+  scheduleChromeHide()
+}
+
+function hideVideoChrome() {
+  clearChromeIdleTimer()
+  showVideoChrome.value = false
+}
+
 function resetVideoUi() {
   videoPlaying.value = false
   videoProgressPct.value = 0
   videoCurrentLabel.value = '0:00'
   videoBusy.value = false
+  hideVideoChrome()
   const el = detailVideo.value
   if (el) {
     try {
@@ -304,10 +333,12 @@ function onVideoTimeUpdate() {
 
 function onVideoPlay() {
   videoPlaying.value = true
+  if (showVideoChrome.value) scheduleChromeHide()
 }
 
 function onVideoPause() {
   videoPlaying.value = false
+  clearChromeIdleTimer()
 }
 
 async function refreshPlaybackUrl() {
@@ -936,6 +967,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('hashchange', syncPageFromHash)
   stopSpeechPolling()
   if (copiedTimer) window.clearTimeout(copiedTimer)
+  clearChromeIdleTimer()
 })
 </script>
 
@@ -1436,11 +1468,11 @@ onBeforeUnmount(() => {
               :class="{
                 playing: videoPlaying,
                 'thumb-missing': !selectedReel.thumbnail_url,
-                'show-chrome': !videoPlaying || videoHovered,
+                'show-chrome': showVideoChrome,
               }"
-              @mouseenter="videoHovered = true"
-              @mousemove="videoHovered = true"
-              @mouseleave="videoHovered = false"
+              @mouseenter="revealVideoChrome"
+              @mousemove="revealVideoChrome"
+              @mouseleave="hideVideoChrome"
             >
               <video
                 v-if="playbackSrc"
