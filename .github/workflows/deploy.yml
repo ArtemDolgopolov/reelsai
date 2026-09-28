@@ -30,6 +30,8 @@ jobs:
       - name: Sync deployment directory
         env:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           YANDEX_CLIENT_ID: ${{ secrets.YANDEX_CLIENT_ID }}
           YANDEX_CLIENT_SECRET: ${{ secrets.YANDEX_CLIENT_SECRET }}
         run: |
@@ -67,6 +69,8 @@ jobs:
           }
           # Inject secrets from GitHub without committing them
           upsert_env RESEND_API_KEY "${RESEND_API_KEY:-}"
+          upsert_env GOOGLE_CLIENT_ID "${GOOGLE_CLIENT_ID:-}"
+          upsert_env GOOGLE_CLIENT_SECRET "${GOOGLE_CLIENT_SECRET:-}"
           upsert_env YANDEX_CLIENT_ID "${YANDEX_CLIENT_ID:-}"
           upsert_env YANDEX_CLIENT_SECRET "${YANDEX_CLIENT_SECRET:-}"
           upsert_env AUTH_COOKIE_SECURE true

@@ -1063,7 +1063,7 @@ onMounted(async () => {
       try {
         sessionStorage.setItem(
           'reelsai_oauth_error',
-          err.message || 'Не удалось завершить вход через Яндекс',
+          err.message || 'Не удалось завершить вход через OAuth',
         )
       } catch {
         // ignore
@@ -1085,7 +1085,7 @@ onMounted(async () => {
     currentPage.value = 'login'
     window.location.hash = 'login'
     try {
-      sessionStorage.setItem('reelsai_oauth_error', 'Сессия после Яндекса не сохранилась, попробуйте ещё раз')
+      sessionStorage.setItem('reelsai_oauth_error', 'Сессия после OAuth не сохранилась, попробуйте ещё раз')
     } catch {
       // ignore
     }
