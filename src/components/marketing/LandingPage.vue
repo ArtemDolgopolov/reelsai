@@ -141,6 +141,8 @@ defineEmits(['navigate'])
       <span>Instagram</span>
       <span>TikTok</span>
       <span>Meta</span>
+      <a href="/privacy.html">Конфиденциальность</a>
+      <a href="/terms.html">Условия</a>
     </footer>
   </div>
 </template>
