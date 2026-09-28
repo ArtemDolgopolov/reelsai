@@ -50,7 +50,10 @@ jobs:
             done < /opt/reelsai/.env.example
           fi
           if ! grep -q '^PUBLIC_APP_URL=' /opt/reelsai/.env; then
-            echo 'PUBLIC_APP_URL=http://18.192.179.203' >> /opt/reelsai/.env
+            echo 'PUBLIC_APP_URL=https://18.192.179.203.sslip.io' >> /opt/reelsai/.env
+          else
+            # Keep OAuth on free HTTPS host (no purchased domain)
+            sed -i 's|^PUBLIC_APP_URL=.*|PUBLIC_APP_URL=https://18.192.179.203.sslip.io|' /opt/reelsai/.env
           fi
           upsert_env() {
             key="$1"
@@ -66,6 +69,7 @@ jobs:
           upsert_env RESEND_API_KEY "${RESEND_API_KEY:-}"
           upsert_env YANDEX_CLIENT_ID "${YANDEX_CLIENT_ID:-}"
           upsert_env YANDEX_CLIENT_SECRET "${YANDEX_CLIENT_SECRET:-}"
+          upsert_env AUTH_COOKIE_SECURE true
           if [ -n "${RESEND_API_KEY:-}" ]; then
             upsert_env AUTH_DEV_EXPOSE_OTP false
           fi

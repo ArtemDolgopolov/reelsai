@@ -143,6 +143,9 @@ function startOauth(provider) {
           Яндекс
         </button>
       </div>
+      <p v-if="providers.yandex" class="mkt-auth-foot" style="margin-top: 8px">
+        Яндекс может показать «Внешний редирект» — нажмите «Перейти».
+      </p>
 
       <p class="mkt-auth-foot">
         Еще нет аккаунта?

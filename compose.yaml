@@ -32,11 +32,11 @@ services:
       GROQ_WHISPER_MODEL: ${GROQ_WHISPER_MODEL:-whisper-large-v3}
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
       AUTH_OTP_PEPPER: ${AUTH_OTP_PEPPER:-}
-      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
       AUTH_DEV_EXPOSE_OTP: ${AUTH_DEV_EXPOSE_OTP:-true}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-AI Рилс Продюсер <onboarding@resend.dev>}
-      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://18.192.179.203}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-https://18.192.179.203.sslip.io}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       YANDEX_CLIENT_ID: ${YANDEX_CLIENT_ID:-}
@@ -54,9 +54,18 @@ services:
         condition: service_healthy
     ports:
       - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - reelsai-caddy-data:/data
+      - reelsai-caddy-config:/config
 
 volumes:
   reelsai-postgres:
     name: reelsai-postgres
   reelsai-auth-secrets:
     name: reelsai-auth-secrets
+  reelsai-caddy-data:
+    name: reelsai-caddy-data
+  reelsai-caddy-config:
+    name: reelsai-caddy-config

@@ -1,4 +1,25 @@
+# Plain IP access (no TLS) — browsing / testing without OAuth host
 :80 {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy api:8000 {
+			transport http {
+				read_timeout 120s
+				write_timeout 120s
+			}
+		}
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# Free HTTPS hostname for OAuth (no purchased domain) — Let's Encrypt via sslip.io
+18.192.179.203.sslip.io {
 	encode zstd gzip
 
 	handle /api/* {
