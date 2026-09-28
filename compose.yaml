@@ -35,7 +35,7 @@ services:
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
       AUTH_DEV_EXPOSE_OTP: ${AUTH_DEV_EXPOSE_OTP:-true}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
-      EMAIL_FROM: ${EMAIL_FROM:-AI Рилс Продюсер <onboarding@resend.dev>}
+      EMAIL_FROM: ${EMAIL_FROM:-AI Рилс Менеджер <onboarding@resend.dev>}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL:-https://18.192.179.203.sslip.io}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}

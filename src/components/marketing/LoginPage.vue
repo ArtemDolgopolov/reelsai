@@ -143,9 +143,6 @@ function startOauth(provider) {
           Яндекс
         </button>
       </div>
-      <p v-if="providers.yandex || providers.google" class="mkt-auth-foot" style="margin-top: 8px">
-        После согласия провайдера вы сразу попадёте в приложение (без кода на почту).
-      </p>
 
       <p class="mkt-auth-foot">
         Еще нет аккаунта?

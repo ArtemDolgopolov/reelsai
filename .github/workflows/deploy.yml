@@ -99,7 +99,7 @@ jobs:
         run: |
           for attempt in {1..48}; do
             if curl --fail --silent --show-error http://127.0.0.1/api/health | grep --quiet '"status":"ok"'; then
-              if curl --fail --silent --show-error http://127.0.0.1/ | grep --quiet -E "AI Рилс Продюсер|Reels Finder|reelsai"; then
+              if curl --fail --silent --show-error http://127.0.0.1/ | grep --quiet -E "AI Рилс Менеджер|Reels Finder|reelsai"; then
                 exit 0
               fi
               # SPA shell may only reference hashed assets — accept healthy API + index.html

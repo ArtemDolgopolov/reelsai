@@ -11,14 +11,14 @@ def send_otp_email(*, to_email: str, code: str, purpose: str) -> bool:
     """Send OTP email. Returns True if delivered (or skipped without key), False on provider error."""
     settings = get_settings()
     if purpose == "register":
-        subject = "Код подтверждения регистрации — AI Рилс Продюсер"
+        subject = "Код подтверждения регистрации — AI Рилс Менеджер"
         body = (
             f"Ваш код подтверждения: {code}\n\n"
             f"Код действует {settings.auth_otp_ttl_min} минут.\n"
             "Если вы не регистрировались — просто игнорируйте письмо."
         )
     else:
-        subject = "Код входа — AI Рилс Продюсер"
+        subject = "Код входа — AI Рилс Менеджер"
         body = (
             f"Ваш код для входа: {code}\n\n"
             f"Код действует {settings.auth_otp_ttl_min} минут.\n"

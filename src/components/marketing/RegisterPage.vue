@@ -54,10 +54,6 @@ function startOauth(provider) {
         <span class="mkt-logo-mark"><WandSparkles :size="19" /></span>
         Reels Finder
       </button>
-      <p class="mkt-auth-foot" style="margin: 0">
-        Уже есть аккаунт?
-        <button class="mkt-link" type="button" @click="$emit('navigate', 'login')">Войти</button>
-      </p>
     </div>
 
     <span class="mkt-doodle mkt-auth-doodle tl">Создавай больше,<br />чем смотрят ✈</span>
@@ -177,6 +173,11 @@ function startOauth(provider) {
           Яндекс
         </button>
       </div>
+
+      <p class="mkt-auth-foot">
+        Уже есть аккаунт?
+        <button class="mkt-link" type="button" @click="$emit('navigate', 'login')">Войти</button>
+      </p>
     </form>
   </div>
 </template>
